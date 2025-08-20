@@ -387,8 +387,8 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
         await q.edit_message_text("فعلا محصولی در این دسته نیست" , reply_markup = category_keyboard(gender))
         return
 
-    # ساخت لیست دکمه‌ها برای محصولات
     keyboard = []
+    text_lines = [f"محصولات دسته «{category}»:"]
     for p in items:
         price_str = ""
         if "variants" in p:
@@ -401,55 +401,45 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             price_str = f"{p['price']:,} تومان"
         btn_text = f"{p['name']} ({price_str})"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"catalog:select:{gender}:{category}:{p['id']}")])
+        # اضافه کردن عکس و نام به متن پیام
+        photo = _product_photo_for_list(p)
+        text_lines.append(f"\n{p['name']}\n{price_str}\n{photo if photo else ''}")
 
-    # دکمه بازگشت
     keyboard.append([
         InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}"),
         InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home"),
     ])
 
     await q.edit_message_text(
-        f"دسته: {category} ({'👨' if gender=='men' else '👩'})\nمحصول مورد نظر را انتخاب کنید:",
+        "\n".join(text_lines),
         reply_markup=InlineKeyboardMarkup(keyboard)
-    )    
-     
-
-async def ask_color_or_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
+    )
+    
+async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
     q = update.callback_query
     await q.answer()
 
     p = _find_product(gender , category , product_id)
-    if not p:
-        await q.edit_message_text("محصول پیدا نشد" , reply_markup = category_keyboard(gender))
+    if not p or "variants" not in p:
+        await q.edit_message_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
-    
-    if "variants" in p and p["variants"]:
-        photo = _product_photo_for_list(p)
-        await q.edit_message_text(
-            f"✅ {p['name']}\nلطفاً رنگ را انتخاب کن:",
-            reply_markup=colors_keyboard(gender, category, product_id)
-        )
-        if photo:
-            await q.message.reply_photo(photo=photo , caption="نمونه تصویر محصول")
-        return
-    price , sizes = _unit_price_and_sizes(p , color=None)
-    if not any(qty > 0 for qty in sizes.values()):
-        await q.edit_message_text("این محصول فعلا موجود نیست" , reply_markup=category_keyboard(gender))
-        return
-    
-    context.user_data["pending"] = {
-        "gender":gender , 
-        "category":category , 
-        "product_id":product_id , 
-        "name":p["name"] , 
-        "color":None , 
-        "price":price , 
-        "sizes":sizes
-    }
+
+    # ساخت دکمه‌های ترکیبی رنگ و سایز
+    rows = []
+    for color, v in p["variants"].items():
+        available_sizes = [sz for sz, qty in v["sizes"].items() if qty > 0]
+        for sz in available_sizes:
+            btn_text = f"{color} | سایز {sz}"
+            rows.append([InlineKeyboardButton(btn_text, callback_data=f"catalog:choose:{gender}:{category}:{product_id}:{color}:{sz}")])
+    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{category}")])
+
+    photo = _product_photo_for_list(p)
     await q.edit_message_text(
-        f"✅ {p['name']}\nلطفاً سایز مورد نظر را انتخاب کنید:",
-        reply_markup=sizes_keyboard(sizes)
+        f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:",
+        reply_markup=InlineKeyboardMarkup(rows)
     )
+    if photo:
+        await q.message.reply_photo(photo=photo, caption="نمونه تصویر محصول")
 
 
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
@@ -484,40 +474,41 @@ async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE
     )
 
 
-async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size: str) -> None:
+async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id, color, size):
     q = update.callback_query
     await q.answer()
-
-    pend = context.user_data.get("pending")
-    if not pend:
-        await q.edit_message_text("عملیات با خطا مواجه شده است . \n دوباره تلاش کنید" , reply_markup = main_menu())
+    p = _find_product(gender, category, product_id)
+    if not p or "variants" not in p or color not in p["variants"]:
+        await q.edit_message_text("محصول یا رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
         return
-    
-    sizes = pend["sizes"]
-    available = int(sizes.get(chosen_size , 0))
-    if available <= 0 :
-        await q.edit_message_text("این سایز موجود نیست" , reply_markup = main_menu())
+    v = p["variants"][color]
+    available = int(v["sizes"].get(size, 0))
+    if available <= 0:
+        await q.edit_message_text("این سایز موجود نیست.", reply_markup=main_menu())
         return
-    
-    pend["size"] = chosen_size
-    pend["available"] = available
-    pend["qty"] = max(1 , pend.get("qty" , 1))
 
-    p = _find_product(pend["gender"], pend["category"], pend["product_id"])
-    photo = _photo_for_selection(p , pend.get("color"))
-
+    context.user_data["pending"] = {
+        "gender": gender,
+        "category": category,
+        "product_id": product_id,
+        "name": p["name"],
+        "color": color,
+        "size": size,
+        "price": v["price"],
+        "available": available,
+        "qty": 1,
+    }
+    photo = v.get("photo") or _product_photo_for_list(p)
     cap = (
-        f"{pend['name']}"
-        f"\nرنگ:{pend['color'] or '-'} | سایز : {pend['size']}"
-        f"\nموجودی:{available}"
-        f"\n قیمت واحد : {_ftm_toman(pend['price'])}"
-        f"\n قیمت نهایی : {_ftm_toman(pend['price'] * pend['qty'])}"
+        f"{p['name']}\nرنگ: {color} | سایز: {size}\n"
+        f"موجودی: {available}\n"
+        f"قیمت واحد: {_ftm_toman(v['price'])}\n"
+        f"قیمت نهایی: {_ftm_toman(v['price'])}"
     )
     if photo:
-        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(pend["qty"], available))
+        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
     else:
-        await q.edit_message_text(cap, reply_markup=qty_keyboard(pend["qty"], available))
-
+        await q.edit_message_text(cap, reply_markup=qty_keyboard(1, available))
 
 #       cart / checkout
 PHONE_REGEX = re.compile(r"^09\d{9}$")
@@ -881,11 +872,11 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         parts = data.split(":" , 3)
         _, _, gender , category = parts
         await show_products(update , context , gender , category) ; return
-        
-    if data.startswith("catalog:select:"):
-        _, _, gender , category , product_id = data.split(":" , 4)
-        await ask_color_or_size(update, context, gender, category, product_id) ; return
-        
+    
+    if data.startswith("catalog:choose:"):
+     _, _, gender, category, product_id, color, size = data.split(":", 6)
+    await show_qty_picker_combined(update, context, gender, category, product_id, color, size) ; return
+       
     if data.startswith("catalog:color:"):
         _, _, gender , category , product_id , color = data.split(":" , 5)
         await after_color_ask_size(update, context, gender, category, product_id , color) ; return
