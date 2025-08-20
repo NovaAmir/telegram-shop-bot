@@ -386,14 +386,11 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
     if not items:
         await q.edit_message_text("فعلا محصولی در این دسته نیست" , reply_markup = category_keyboard(gender))
         return
-    
-    await q.edit_message_text(
-        f"دسته: {category} ({'👨' if gender=='men' else '👩'})\nبرای هر محصول روی «🛒 انتخاب» بزن.",
-        reply_markup=category_keyboard(gender)
-    )
 
+    # ساخت لیست دکمه‌ها برای محصولات
+    keyboard = []
     for p in items:
-        price_str=""
+        price_str = ""
         if "variants" in p:
             try:
                 min_price = min(v["price"] for v in p["variants"].values())
@@ -402,18 +399,20 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
                 price_str = "-"
         else:
             price_str = f"{p['price']:,} تومان"
-        
-        photo = _product_photo_for_list(p)
-        cap = f"{p['name']}\n💵 قیمت: {price_str}"
+        btn_text = f"{p['name']} ({price_str})"
+        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"catalog:select:{gender}:{category}:{p['id']}")])
 
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 انتخاب" , callback_data=f"catalog:select:{gender}:{category}:{p['id']}")]
-        ])
-        if photo:
-            await q.message.reply_photo(photo=photo , caption=cap , reply_markup=kb)
-        else:
-            await q.message.reply_text(text=cap , reply_markup=kb)
+    # دکمه بازگشت
+    keyboard.append([
+        InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}"),
+        InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home"),
+    ])
 
+    await q.edit_message_text(
+        f"دسته: {category} ({'👨' if gender=='men' else '👩'})\nمحصول مورد نظر را انتخاب کنید:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )    
+     
 
 async def ask_color_or_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
     q = update.callback_query
@@ -1056,5 +1055,6 @@ if __name__ == "__main__":
         
         
         
+
 
 
