@@ -421,7 +421,7 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             [InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}")],
             [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
         ])
-    )
+   )
     
 async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
     q = update.callback_query
@@ -529,7 +529,10 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         f"قیمت نهایی: {_ftm_toman(p['price'])}"
     )
     if photo:
-        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+        try:
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(1, available))
+        except Exception:
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(1, available))
     else:
         await q.edit_message_text(cap, reply_markup=qty_keyboard(1, available))
 
@@ -566,7 +569,10 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
         f"قیمت نهایی: {_ftm_toman(v['price'])}"
     )
     if photo:
-        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+        try:
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(1, available))
+        except Exception:
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(1, available))
     else:
         await q.edit_message_text(cap, reply_markup=qty_keyboard(1, available))
 
@@ -935,13 +941,13 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
     if data.startswith("catalog:select:"):
         _, _, gender, category, product_id = data.split(":", 4)
-        await ask_color_and_size(update, context, gender, category, product_id)
-        return
+        await ask_color_and_size(update, context, gender, category, product_id) ; return
+        
     
     if data.startswith("catalog:sizeonly:"):
         _, _, gender, category, product_id = data.split(":", 4)
-        await ask_size_only(update, context, gender, category, product_id)
-        return
+        await ask_size_only(update, context, gender, category, product_id) ; return
+        
     
     if data.startswith("catalog:chooseonly:"):
         _, _, gender, category, product_id, size = data.split(":", 5)
@@ -953,8 +959,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             "size": size,
             "price": _find_product(gender, category, product_id)["price"],
         }
-        await show_qty_picker(update, context, size)
-        return
+        await show_qty_picker(update, context, size) ; return
+        
     
     if data.startswith("catalog:choose:"):
         parts = data.split(":", 6)
@@ -962,9 +968,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
             return
         _, _, gender, category, product_id, color, size = parts
-        await show_qty_picker_combined(update, context, gender, category, product_id, color, size)
-        return
-    
+        await show_qty_picker_combined(update, context, gender, category, product_id, color, size) ; return
+        
        
     if data.startswith("catalog:color:"):
         _, _, gender , category , product_id , color = data.split(":" , 5)
@@ -995,9 +1000,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         )
         try:
             await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-        except:
+        except Exception:
             await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-        return
     
     
     if data == "qty:dec":
@@ -1017,9 +1021,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         )
         try:
             await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-        except:
+        except Exception:
             await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-        return
     
 
     if data == "qty:add":
@@ -1129,13 +1132,3 @@ if __name__ == "__main__":
     flask_app.run(host="0.0.0.0", port=port, debug=False)
 
         
-        
-        
-        
-        
-        
-        
-
-
-
-
