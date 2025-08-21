@@ -415,7 +415,7 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             await q.message.reply_text(caption, reply_markup=keyboard)
 
     # پیام راهنما و دکمه بازگشت
-    await q.edit_message_text(
+    await q.message.reply_text(
         f"دسته: {category}\nبرای انتخاب هر محصول روی دکمه زیر عکس آن کلیک کن.",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}")],
@@ -1135,6 +1135,7 @@ if __name__ == "__main__":
         
         
         
+
 
 
 
