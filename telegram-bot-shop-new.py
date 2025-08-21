@@ -378,6 +378,7 @@ async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , ge
     await q.answer()
     await q.edit_message_text(f"انتخاب جنسیت: {'👨 مردانه' if gender=='men' else '👩 زنانه'}\nحالا نوع محصول رو انتخاب کن:", reply_markup=category_keyboard(gender))
 
+
 async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -386,7 +387,6 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
         await q.edit_message_text("فعلا محصولی در این دسته نیست" , reply_markup = category_keyboard(gender))
         return
 
-    # ارسال عکس و نام هر محصول
     for p in items:
         price_str = ""
         if "variants" in p:
@@ -399,40 +399,32 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             price_str = f"{p['price']:,} تومان"
         photo = _product_photo_for_list(p)
         caption = f"{p['name']}\n{price_str}"
-        if photo:
-            await q.message.reply_photo(photo=photo, caption=caption)
-        else:
-            await q.message.reply_text(caption)
-    
-    # ساخت دکمه‌های انتخاب محصول
-    keyboard = []
-    for p in items:
-        price_str = ""
-        if "variants" in p:
-            try:
-                min_price = min(v["price"] for v in p["variants"].values())
-                price_str = f"{min_price:,} تومان ~"
-            except Exception:
-                price_str = "-"
-            # محصول هم رنگ دارد هم سایز
-            btn_text = f"{p['name']} ({price_str})"
-            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"catalog:select:{gender}:{category}:{p['id']}")])
-        else:
-            price_str = f"{p['price']:,} تومان"
-            # محصول فقط سایز دارد
-            btn_text = f"{p['name']} ({price_str})"
-            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"catalog:sizeonly:{gender}:{category}:{p['id']}")])
-    
-    keyboard.append([
-        InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}"),
-        InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home"),
-    ])
 
+        # ساخت دکمه انتخاب مناسب هر محصول
+        if "variants" in p:
+            # محصول هم رنگ دارد هم سایز
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{category}:{p['id']}")
+        else:
+            # محصول فقط سایز دارد
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{category}:{p['id']}")
+
+        keyboard = InlineKeyboardMarkup([[btn]])
+
+        if photo:
+            await q.message.reply_photo(photo=photo, caption=caption, reply_markup=keyboard)
+        else:
+            await q.message.reply_text(caption, reply_markup=keyboard)
+
+    # پیام راهنما و دکمه بازگشت
     await q.edit_message_text(
-        f"دسته: {category}\nمحصول مورد نظر را انتخاب کنید:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        f"دسته: {category}\nبرای انتخاب هر محصول روی دکمه زیر عکس آن کلیک کن.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}")],
+            [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
+        ])
     )
-    
+
+
 async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -1140,6 +1132,7 @@ if __name__ == "__main__":
         
         
         
+
 
 
 
