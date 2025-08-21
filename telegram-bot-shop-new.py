@@ -429,7 +429,7 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
 
     p = _find_product(gender , category , product_id)
     if not p or "variants" not in p:
-        await q.edit_message_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
+        await q.message.reply_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
 
     # ساخت دکمه‌های ترکیبی رنگ و سایز
@@ -442,7 +442,7 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{category}")])
 
     photo = _product_photo_for_list(p)
-    await q.edit_message_text(
+    await q.message.reply_text(
         f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
@@ -487,13 +487,13 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
     await q.answer()
     p = _find_product(gender, category, product_id)
     if not p or "sizes" not in p:
-        await q.edit_message_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
+        await q.message.reply_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
     rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{category}:{product_id}:{sz}")] for sz in available_sizes]
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{category}")])
     photo = _product_photo_for_list(p)
-    await q.edit_message_text(
+    await q.message.reply_text(
         f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
