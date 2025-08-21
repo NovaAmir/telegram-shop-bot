@@ -378,7 +378,6 @@ async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , ge
     await q.answer()
     await q.edit_message_text(f"انتخاب جنسیت: {'👨 مردانه' if gender=='men' else '👩 زنانه'}\nحالا نوع محصول رو انتخاب کن:", reply_markup=category_keyboard(gender))
 
-
 async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -423,8 +422,7 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
         ])
     )
-
-
+    
 async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -935,6 +933,11 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         _, _, gender , category = parts
         await show_products(update , context , gender , category) ; return
     
+    if data.startswith("catalog:select:"):
+        _, _, gender, category, product_id = data.split(":", 4)
+        await ask_color_and_size(update, context, gender, category, product_id)
+        return
+    
     if data.startswith("catalog:sizeonly:"):
         _, _, gender, category, product_id = data.split(":", 4)
         await ask_size_only(update, context, gender, category, product_id)
@@ -1132,7 +1135,6 @@ if __name__ == "__main__":
         
         
         
-
 
 
 
