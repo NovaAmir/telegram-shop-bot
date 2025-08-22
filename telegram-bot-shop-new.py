@@ -571,7 +571,6 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
     else:
         await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
 
-    context.uavailable))
 
 #       cart / checkout
 PHONE_REGEX = re.compile(r"^09\d{9}$")
