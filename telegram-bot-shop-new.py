@@ -26,6 +26,13 @@ if not BOT_TOKEN :
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
 
+def _safe_callback(val):
+    import re
+    val = str(val)
+    val = re.sub(r'[^\w\-]', '', val)
+    return val[:20]  # حداکثر 20 کاراکتر
+
+
 #      storge(json)
 DB_FILE = os.getenv("SHOP_DB_FILE" , "shop_db.json")
 
@@ -233,7 +240,7 @@ def category_keyboard(gender : str) -> InlineKeyboardMarkup:
     rows = []
     for i in range(0 , len(cats) , 2):
         chunk = cats[i:i+2]
-        rows.append([InlineKeyboardButton(c , callback_data=f"catalog:category:{gender}:{c}")for c in chunk])
+        rows.append([InlineKeyboardButton(c , callback_data=f"catalog:category:{gender}:{_safe_callback(c)}")for c in chunk])
     rows.append([
         InlineKeyboardButton("⬅️ تغییر جنسیت" , callback_data="menu:products"),
         InlineKeyboardButton("🏠 منو اصلی" , callback_data="menu:back_home"),
@@ -248,9 +255,9 @@ def colors_keyboard(gender:str , category:str , product_id:str) -> InlineKeyboar
     rows = []
     for i in range(0 , len(colors) , 2):
         chunk = colors[i:i+2]
-        rows.append([InlineKeyboardButton(col , callback_data=f"catalog:color:{gender}:{category}:{product_id}:{col}")for col in chunk])
-    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر " , callback_data=f"catalog:category:{gender}:{category}")])
-    return InlineKeyboardMarkup(rows) 
+        rows.append([InlineKeyboardButton(col , callback_data=f"catalog:color:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(col)}")for col in chunk])
+    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر " , callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
+    return InlineKeyboardMarkup(rows)
 
 
 def sizes_keyboard(sizes:Dict[str , int]) -> InlineKeyboardMarkup:
@@ -258,7 +265,7 @@ def sizes_keyboard(sizes:Dict[str , int]) -> InlineKeyboardMarkup:
     rows = []
     for i in range(0 , len(available) , 3):
         chunk = available[i:i+3]
-        rows.append([InlineKeyboardButton(sz , callback_data=f"catalog:size:{sz}") for sz in chunk])
+        rows.append([InlineKeyboardButton(sz , callback_data=f"catalog:size:{_safe_callback(sz)}") for sz in chunk])
     rows.append([InlineKeyboardButton("❌ انصراف" , callback_data="flow:cancel")])
     return InlineKeyboardMarkup(rows)
 
@@ -378,6 +385,7 @@ async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , ge
     await q.answer()
     await q.edit_message_text(f"انتخاب جنسیت: {'👨 مردانه' if gender=='men' else '👩 زنانه'}\nحالا نوع محصول رو انتخاب کن:", reply_markup=category_keyboard(gender))
 
+
 async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -437,8 +445,11 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
         available_sizes = [sz for sz, qty in v["sizes"].items() if qty > 0]
         for sz in available_sizes:
             btn_text = f"{color} | سایز {sz}"
-            rows.append([InlineKeyboardButton(btn_text, callback_data=f"catalog:choose:{gender}:{category}:{product_id}:{color}:{sz}")])
-    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{category}")])
+            rows.append([InlineKeyboardButton(
+                btn_text,
+                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(color)}:{sz}"
+            )])
+    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
 
     photo = _product_photo_for_list(p)
     await q.message.reply_text(
@@ -480,6 +491,7 @@ async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE
         reply_markup=sizes_keyboard(sizes)
     )
 
+
 async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id):
     q = update.callback_query
     await q.answer()
@@ -489,8 +501,8 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
         await q.message.reply_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
-    rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{category}:{product_id}:{sz}")] for sz in available_sizes]
-    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{category}")])
+    rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{product_id}:{sz}")] for sz in available_sizes]
+    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
     photo = _product_photo_for_list(p)
     await q.message.reply_text(
         f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:",
