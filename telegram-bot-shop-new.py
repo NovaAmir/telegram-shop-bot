@@ -399,7 +399,7 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
         if "variants" in p:
             try:
                 min_price = min(v["price"] for v in p["variants"].values())
-                price_str = f"{min_price:,} تومان ~"
+                price_str = f"{min_price:,} تومان"
             except Exception:
                 price_str = "-"
         else:
@@ -410,10 +410,10 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
         # ساخت دکمه انتخاب مناسب هر محصول
         if "variants" in p:
             # محصول هم رنگ دارد هم سایز
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{category}:{p['id']}")
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         else:
             # محصول فقط سایز دارد
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{category}:{p['id']}")
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{p['id']}")
 
         keyboard = InlineKeyboardMarkup([[btn]])
 
