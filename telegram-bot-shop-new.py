@@ -427,15 +427,9 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
     q = update.callback_query
     await q.answer()
 
-    # حذف پیام قبلی
-    try:
-        await q.message.delete()
-    except Exception:
-        pass
-
     p = _find_product(gender , category , product_id)
     if not p or "variants" not in p:
-        await update.effective_chat.send_message("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
+        await q.message.reply_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
 
     rows = []
@@ -447,31 +441,25 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{category}")])
 
     photo = _product_photo_for_list(p)
-    await update.effective_chat.send_message(
+    await q.message.reply_text(
         f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
     if photo:
-        await update.effective_chat.send_photo(photo=photo, caption="نمونه تصویر محصول")
+        await q.message.reply_photo(photo=photo, caption="نمونه تصویر محصول")
 
 
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
     q = update.callback_query
     await q.answer()
 
-    # حذف پیام قبلی
-    try:
-        await q.message.delete()
-    except Exception:
-        pass
-
     p = _find_product(gender , category , product_id)
     if not p or "variants" not in p or color not in p["variants"]:
-        await update.effective_chat.send_message("رنگ انتخابی معتبر نیست" , reply_markup = colors_keyboard(gender , category , product_id))
+        await q.message.reply_text("رنگ انتخابی معتبر نیست" , reply_markup = colors_keyboard(gender , category , product_id))
         return
     price , sizes = _unit_price_and_sizes(p , color=color)
     if not any(qty > 0 for qty in sizes.values()):
-        await update.effective_chat.send_message("این رنگ فعلا موجود نیست" , reply_markup = colors_keyboard(gender , category , product_id))
+        await q.message.reply_text("این رنگ فعلا موجود نیست" , reply_markup = colors_keyboard(gender , category , product_id))
         return
     
     context.user_data["pending"] = {
@@ -486,60 +474,47 @@ async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE
 
     photo = _photo_for_selection(p , color=color)
     if photo:
-        await update.effective_chat.send_photo(photo=photo, caption=f"{p['name']}\nرنگ: {color}")
-    await update.effective_chat.send_message(
+        await q.message.reply_photo(photo=photo, caption=f"{p['name']}\nرنگ: {color}")
+    await q.message.reply_text(
         f"رنگ انتخاب شده: {color}\nحالا سایز مورد نظر را انتخاب کنید:",
         reply_markup=sizes_keyboard(sizes)
     )
-
 
 async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id):
     q = update.callback_query
     await q.answer()
 
-    # حذف پیام قبلی
-    try:
-        await q.message.delete()
-    except Exception:
-        pass
-
     p = _find_product(gender, category, product_id)
     if not p or "sizes" not in p:
-        await update.effective_chat.send_message("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
+        await q.message.reply_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
     rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{category}:{product_id}:{sz}")] for sz in available_sizes]
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{category}")])
     photo = _product_photo_for_list(p)
-    await update.effective_chat.send_message(
+    await q.message.reply_text(
         f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
     if photo:
-        await update.effective_chat.send_photo(photo=photo, caption="نمونه تصویر محصول")
+        await q.message.reply_photo(photo=photo, caption="نمونه تصویر محصول")
 
 
 async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
     q = update.callback_query
     await q.answer()
 
-    # حذف پیام قبلی
-    try:
-        await q.message.delete()
-    except Exception:
-        pass
-
     pend = context.user_data.get("pending")
     if not pend:
-        await update.effective_chat.send_message("اطلاعات محصول ناقص است.", reply_markup=main_menu())
+        await q.message.reply_text("اطلاعات محصول ناقص است.", reply_markup=main_menu())
         return
     p = _find_product(pend["gender"], pend["category"], pend["product_id"])
     if not p or "sizes" not in p or chosen_size not in p["sizes"]:
-        await update.effective_chat.send_message("سایز انتخابی معتبر نیست.", reply_markup=main_menu())
+        await q.message.reply_text("سایز انتخابی معتبر نیست.", reply_markup=main_menu())
         return
     available = int(p["sizes"].get(chosen_size, 0))
     if available <= 0:
-        await update.effective_chat.send_message("این سایز موجود نیست.", reply_markup=main_menu())
+        await q.message.reply_text("این سایز موجود نیست.", reply_markup=main_menu())
         return
 
     pend["size"] = chosen_size
@@ -554,29 +529,23 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         f"قیمت نهایی: {_ftm_toman(p['price'])}"
     )
     if photo:
-        await update.effective_chat.send_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
     else:
-        await update.effective_chat.send_message(cap, reply_markup=qty_keyboard(1, available))
+        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
 
 
 async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id, color, size):
     q = update.callback_query
     await q.answer()
 
-    # حذف پیام قبلی
-    try:
-        await q.message.delete()
-    except Exception:
-        pass
-
     p = _find_product(gender, category, product_id)
     if not p or "variants" not in p or color not in p["variants"]:
-        await update.effective_chat.send_message("محصول یا رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+        await q.message.reply_text("محصول یا رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
         return
     v = p["variants"][color]
     available = int(v["sizes"].get(size, 0))
     if available <= 0:
-        await update.effective_chat.send_message("این سایز موجود نیست.", reply_markup=main_menu())
+        await q.message.reply_text("این سایز موجود نیست.", reply_markup=main_menu())
         return
 
     context.user_data["pending"] = {
@@ -598,9 +567,11 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
         f"قیمت نهایی: {_ftm_toman(v['price'])}"
     )
     if photo:
-        await update.effective_chat.send_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
     else:
-        await update.effective_chat.send_message(cap, reply_markup=qty_keyboard(1, available))
+        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
+
+    context.uavailable))
 
 #       cart / checkout
 PHONE_REGEX = re.compile(r"^09\d{9}$")
