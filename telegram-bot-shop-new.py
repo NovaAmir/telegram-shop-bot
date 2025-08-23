@@ -214,6 +214,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
 
 CATALOG = STORE.get_catalog(CATALOG)
 
+# ...existing code...
+CATEGORY_MAP = {}
+for gender in CATALOG:
+    for cat in CATALOG[gender]:
+        CATEGORY_MAP[_safe_callback(cat)] = cat
+# ...existing code...
+
 
 #     منوها
 
@@ -944,21 +951,25 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         
     if data.startswith("catalog:category:"):
         parts = data.split(":" , 3)
-        _, _, gender , category = parts
+        _, _, gender , category_safe = parts
+        category = CATEGORY_MAP.get(category_safe , category_safe)
         await show_products(update , context , gender , category) ; return
     
     if data.startswith("catalog:select:"):
-        _, _, gender, category, product_id = data.split(":", 4)
+        _, _, gender, category_safe, product_id = data.split(":", 4)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
         await ask_color_and_size(update, context, gender, category, product_id) ; return
         
     
     if data.startswith("catalog:sizeonly:"):
-        _, _, gender, category, product_id = data.split(":", 4)
+        _, _, gender, category_safe, product_id = data.split(":", 4)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
         await ask_size_only(update, context, gender, category, product_id) ; return
         
     
     if data.startswith("catalog:chooseonly:"):
-        _, _, gender, category, product_id, size = data.split(":", 5)
+        _, _, gender, category_safe , product_id, size = data.split(":", 5)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
         context.user_data["pending"] = {
             "gender": gender,
             "category": category,
@@ -975,12 +986,14 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         if len(parts) != 7:
             await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
             return
-        _, _, gender, category, product_id, color, size = parts
+        _, _, gender, category_safe, product_id, color, size = parts
+        category = CATEGORY_MAP.get(category_safe , category_safe)
         await show_qty_picker_combined(update, context, gender, category, product_id, color, size) ; return
         
        
     if data.startswith("catalog:color:"):
-        _, _, gender , category , product_id , color = data.split(":" , 5)
+        _, _, gender , category_safe , product_id , color = data.split(":" , 5)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
         await after_color_ask_size(update, context, gender, category, product_id , color) ; return
         
     if data.startswith("catalog:size"):
