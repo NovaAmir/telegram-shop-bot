@@ -716,6 +716,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
         [InlineKeyboardButton("💳 پرداخت آنلاین", callback_data="checkout:pay")],
+        [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
     ])
     await send(chat_id=chat_id, text=info, reply_markup=kb)
@@ -840,7 +841,6 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "برای تکمیل، روی دکمهٔ زیر بزن:",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("💳 رفتن به درگاه پرداخت", url=pay_link)],
-            [InlineKeyboardButton("🔁 پس از پرداخت: بررسی وضعیت پرداخت", callback_data=f"checkout:verify:{order_id}")],
             [InlineKeyboardButton("🏠 منو", callback_data="menu:back_home")],
         ])
     )
@@ -1152,6 +1152,7 @@ if __name__ == "__main__":
         
         
         
+
 
 
 
