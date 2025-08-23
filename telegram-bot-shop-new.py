@@ -627,6 +627,7 @@ async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE
                 InlineKeyboardButton("انصراف" , callback_data="cancel")
             ),
         )
+        context.user_data["awaiting"] = "name"
         return CUSTOMER_NAME
     else:
         await q.edit_message_text("❌ سبد خرید شما خالی است. ابتدا محصولی انتخاب کنید.")
@@ -1158,6 +1159,7 @@ if __name__ == "__main__":
         
         
         
+
 
 
 
