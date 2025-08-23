@@ -1045,7 +1045,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         except Exception:
             await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
     
-
     if data == "qty:add":
         pend = context.user_data.get("pending")
         if not pend:
@@ -1064,15 +1063,21 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         _merge_cart_item(cart , item)
         context.user_data.pop("pending" , None)
 
-        await q.edit_message_text(
-            "✅ به سبد خرید اضافه شد.\nمی‌تونی ادامه بدی یا سبد خرید رو ببینی:",
-            reply_markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")] , 
-                [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")] ,
-            ])
-        )
-        return 
-    
+        txt = "✅ به سبد خرید اضافه شد.\nمی‌تونی ادامه بدی یا سبد خرید رو ببینی:"
+        try:
+            await q.edit_message_caption(caption=txt, reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
+                [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
+           ]))
+        except Exception:
+            await q.edit_message_text(
+                txt,
+                reply_markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
+                    [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
+                ])
+            )
+        return
 
     if data == "qty:noop":
         await q.answer() ; return
