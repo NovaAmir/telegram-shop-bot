@@ -402,17 +402,12 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
         return
 
     for p in items:
-        price_str = ""
         if "variants" in p:
-            try:
-                min_price = min(v["price"] for v in p["variants"].values())
-                price_str = f"{min_price:,} تومان"
-            except Exception:
-                price_str = "-"
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         else:
-            price_str = f"{p['price']:,} تومان"
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         photo = _product_photo_for_list(p)
-        caption = f"{p['name']}\n{price_str}"
+        caption = f"{p['name']}"
 
         # ساخت دکمه انتخاب مناسب هر محصول
         if "variants" in p:
@@ -463,6 +458,7 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
         reply_markup=InlineKeyboardMarkup(rows)
     )
     
+
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -511,6 +507,8 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
         f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
+    
+
 
 async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
     q = update.callback_query
@@ -952,7 +950,12 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data.startswith("catalog:select:"):
         _, _, gender, category_safe, product_id = data.split(":", 4)
         category = CATEGORY_MAP.get(category_safe , category_safe)
-        await ask_color_and_size(update, context, gender, category, product_id) ; return
+        product = _find_product(gender , category , product_id)
+        if product and "variants" in product:
+            await ask_color_and_size(update, context, gender, category, product_id)
+        else:
+            await ask_size_only(update , context , gender , category , product_id)
+        return
         
     
     if data.startswith("catalog:sizeonly:"):
@@ -1152,10 +1155,6 @@ if __name__ == "__main__":
         
         
         
-
-
-
-
 
 
 
