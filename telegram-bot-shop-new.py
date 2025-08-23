@@ -458,15 +458,11 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
             )])
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
 
-    photo = _product_photo_for_list(p)
     await q.message.reply_text(
         f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
-    if photo:
-        await q.message.reply_photo(photo=photo, caption="نمونه تصویر محصول")
-
-
+    
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -510,14 +506,11 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
     rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{product_id}:{sz}")] for sz in available_sizes]
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
-    photo = _product_photo_for_list(p)
+    
     await q.message.reply_text(
         f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
-    if photo:
-        await q.message.reply_photo(photo=photo, caption="نمونه تصویر محصول")
-
 
 async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
     q = update.callback_query
@@ -1159,6 +1152,7 @@ if __name__ == "__main__":
         
         
         
+
 
 
 
