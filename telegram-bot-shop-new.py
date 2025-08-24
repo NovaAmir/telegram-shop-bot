@@ -262,7 +262,7 @@ def colors_keyboard(gender:str , category:str , product_id:str) -> InlineKeyboar
     rows = []
     for i in range(0 , len(colors) , 2):
         chunk = colors[i:i+2]
-        rows.append([InlineKeyboardButton(col , callback_data=f"catalog:color:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(col)}")for col in chunk])
+        rows.append([InlineKeyboardButton(col , callback_data=f"catalog:color:{gender}:{_safe_callback(category)}:{_safe_callback(product_id)}:{_safe_callback(col)}")for col in chunk])
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر " , callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
     return InlineKeyboardMarkup(rows)
 
@@ -408,10 +408,10 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
         # ساخت دکمه انتخاب مناسب هر محصول
         if "variants" in p:
             # محصول هم رنگ دارد هم سایز
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{_safe_callback(p['id'])}")
         else:
             # محصول فقط سایز دارد
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{p['id']}")
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{_safe_callback(p['id'])}")
 
         keyboard = InlineKeyboardMarkup([[btn]])
 
@@ -446,7 +446,7 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
                 btn_text = f"{color} | سایز {sz}"
                 rows.append([InlineKeyboardButton(
                     btn_text,
-                    callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(color)}:{sz}"
+                    callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{_safe_callback(product_id)}:{_safe_callback(color)}:{sz}"
                 )])
     
     if not rows:
@@ -508,7 +508,7 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
         await q.message.reply_text("هیچ سایزی برای این محصول موجود نیست.", reply_markup=category_keyboard(gender))
         return
         
-    rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{product_id}:{sz}")] for sz in available_sizes]
+    rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{_safe_callback(product_id)}:{sz}")] for sz in available_sizes]
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
     
     await q.message.reply_text(
@@ -1167,6 +1167,7 @@ if __name__ == "__main__":
         
         
         
+
 
 
 
