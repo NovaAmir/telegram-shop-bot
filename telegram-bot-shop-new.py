@@ -393,12 +393,12 @@ async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , ge
     await q.edit_message_text(f"انتخاب جنسیت: {'👨 مردانه' if gender=='men' else '👩 زنانه'}\nحالا نوع محصول رو انتخاب کن:", reply_markup=category_keyboard(gender))
 
 
-async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str) -> None:
+async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str) -> None:
     q = update.callback_query
     await q.answer()
-    items = CATALOG.get(gender , {}).get(category , [])
+    items = CATALOG.get(gender, {}).get(category, [])
     if not items:
-        await q.edit_message_text("فعلا محصولی در این دسته نیست" , reply_markup = category_keyboard(gender))
+        await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
         return
 
     for p in items:
@@ -427,13 +427,13 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             [InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}")],
             [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
         ])
-   )
+    )
 
-async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
+async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str, product_id:str) -> None:
     q = update.callback_query
     await q.answer()
 
-    p = _find_product(gender , category , product_id)
+    p = _find_product(gender, category, product_id)
     if not p or "variants" not in p:
         await q.message.reply_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
@@ -441,12 +441,18 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
     rows = []
     for color, v in p["variants"].items():
         available_sizes = [sz for sz, qty in v["sizes"].items() if qty > 0]
-        for sz in available_sizes:
-            btn_text = f"{color} | سایز {sz}"
-            rows.append([InlineKeyboardButton(
-                btn_text,
-                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(color)}:{sz}"
-            )])
+        if available_sizes:  # فقط اگر سایز موجود باشد دکمه اضافه کن
+            for sz in available_sizes:
+                btn_text = f"{color} | سایز {sz}"
+                rows.append([InlineKeyboardButton(
+                    btn_text,
+                    callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(color)}:{sz}"
+                )])
+    
+    if not rows:
+        await q.message.reply_text("هیچ رنگ و سایزی برای این محصول موجود نیست.", reply_markup=category_keyboard(gender))
+        return
+        
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
 
     await q.message.reply_text(
@@ -496,7 +502,12 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
     if not p or "sizes" not in p:
         await q.message.reply_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
+    
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
+    if not available_sizes:
+        await q.message.reply_text("هیچ سایزی برای این محصول موجود نیست.", reply_markup=category_keyboard(gender))
+        return
+        
     rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{product_id}:{sz}")] for sz in available_sizes]
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
     
@@ -1042,25 +1053,27 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data == "qty:add":
         pend = context.user_data.get("pending")
         if not pend:
-            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
+            await q.answer("خطا در انجام عملیات", show_alert=True)
+            return
+            
         item = {
-            "product_id" : pend["product_id"] ,
-            "gender" : pend["gender"] , 
-            "category" : pend["category"] , 
-            "name" : pend["name"] , 
-            "color" : pend.get("color") , 
-            "size" : pend.get("size") , 
-            "qty" : pend["qty"] , 
-            "price" : pend["price"] ,  
+            "product_id": pend["product_id"],
+            "gender": pend["gender"], 
+            "category": pend["category"], 
+            "name": pend["name"], 
+            "color": pend.get("color"), 
+            "size": pend.get("size"), 
+            "qty": pend["qty"], 
+            "price": pend["price"],  
         }
-        cart = context.user_data.setdefault("cart" , [])
-        _merge_cart_item(cart , item)
-        context.user_data.pop("pending" , None)
+        cart = context.user_data.setdefault("cart", [])
+        _merge_cart_item(cart, item)
+        context.user_data.pop("pending", None)
 
         txt = "✅ به سبد خرید اضافه شد.\nمی‌تونی ادامه بدی یا سبد خرید رو ببینی:"
         await q.message.reply_text(
             txt,
-            reply_markup = InlineKeyboardMarkup([
+            reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
                 [InlineKeyboardButton("🧾 ثبت سفارش", callback_data="checkout:begin")],
                 [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
@@ -1068,6 +1081,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
+    
     if data == "qty:noop":
         await q.answer() ; return
     
@@ -1153,6 +1167,7 @@ if __name__ == "__main__":
         
         
         
+
 
 
 
