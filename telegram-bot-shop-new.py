@@ -402,10 +402,6 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
         return
 
     for p in items:
-        if "variants" in p:
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
-        else:
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         photo = _product_photo_for_list(p)
         caption = f"{p['name']}"
 
@@ -432,7 +428,7 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
         ])
    )
-    
+
 async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -457,7 +453,8 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
         f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
-    
+
+
 
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
     q = update.callback_query
@@ -1065,6 +1062,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             txt,
             reply_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
+                [InlineKeyboardButton("🧾 ثبت سفارش", callback_data="checkout:begin")],
                 [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
             ])
         )
@@ -1155,6 +1153,9 @@ if __name__ == "__main__":
         
         
         
+
+
+
 
 
 
