@@ -27,10 +27,9 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
 
 def _safe_callback(val):
-    import re
-    val = str(val)
-    val = re.sub(r'[^\w\-]', '', val)
-    return val[:20]  # حداکثر 20 کاراکتر
+    val = str(val).strip()
+    val = val.replace(" ","_")
+    return val[:60]
 
 
 #      storge(json)
@@ -1167,6 +1166,7 @@ if __name__ == "__main__":
         
         
         
+
 
 
 
