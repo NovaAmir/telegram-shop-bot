@@ -32,6 +32,12 @@ def _safe_callback(val):
     val = re.sub(r'[^\w\-]', '', val)
     return val[:20]  # حداکثر 20 کاراکتر
 
+def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
+    for color in product_variants.keys():
+        if _safe_callback(color) == safe_color:
+            return color
+    return None
+
 
 #      storge(json)
 DB_FILE = os.getenv("SHOP_DB_FILE" , "shop_db.json")
@@ -402,6 +408,10 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
         return
 
     for p in items:
+        if "variants" in p:
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
+        else:
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         photo = _product_photo_for_list(p)
         caption = f"{p['name']}"
 
@@ -428,12 +438,12 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
         ])
    )
-
-async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str) -> None:
+    
+async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str, product_id:str) -> None:
     q = update.callback_query
     await q.answer()
 
-    p = _find_product(gender , category , product_id)
+    p = _find_product(gender, category, product_id)
     if not p or "variants" not in p:
         await q.message.reply_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
@@ -447,14 +457,18 @@ async def ask_color_and_size(update:Update , context:ContextTypes.DEFAULT_TYPE ,
                 btn_text,
                 callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(color)}:{sz}"
             )])
+    
+    if not rows:
+        await q.message.reply_text("هیچ رنگ و سایزی برای این محصول موجود نیست.", reply_markup=category_keyboard(gender))
+        return
+        
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
 
     await q.message.reply_text(
         f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
-
-
+    
 
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
     q = update.callback_query
@@ -980,15 +994,41 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         if len(parts) != 7:
             await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
             return
-        _, _, gender, category_safe, product_id, color, size = parts
-        category = CATEGORY_MAP.get(category_safe , category_safe)
-        await show_qty_picker_combined(update, context, gender, category, product_id, color, size) ; return
+        _, _, gender, category_safe, product_id, color_safe, size = parts
+        category = CATEGORY_MAP.get(category_safe, category_safe)
+    
+        # پیدا کردن محصول و بازیابی رنگ اصلی
+        p = _find_product(gender, category, product_id)
+        if not p or "variants" not in p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+    
+        color = _unsafe_color(color_safe, p["variants"])
+        if not color:
+            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            return
+    
+        await show_qty_picker_combined(update, context, gender, category, product_id, color, size)
+        return
         
        
     if data.startswith("catalog:color:"):
-        _, _, gender , category_safe , product_id , color = data.split(":" , 5)
-        category = CATEGORY_MAP.get(category_safe , category_safe)
-        await after_color_ask_size(update, context, gender, category, product_id , color) ; return
+        _, _, gender, category_safe, product_id, color_safe = data.split(":", 5)
+        category = CATEGORY_MAP.get(category_safe, category_safe)
+    
+        # پیدا کردن محصول و بازیابی رنگ اصلی
+        p = _find_product(gender, category, product_id)
+        if not p or "variants" not in p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+    
+        color = _unsafe_color(color_safe, p["variants"])
+        if not color:
+            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            return
+    
+        await after_color_ask_size(update, context, gender, category, product_id, color)
+        return
         
     if data.startswith("catalog:size"):
         _, _, chosen_size = data.split(":" , 2)
@@ -1062,7 +1102,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             txt,
             reply_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
-                [InlineKeyboardButton("🧾 ثبت سفارش", callback_data="checkout:begin")],
                 [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
             ])
         )
@@ -1153,9 +1192,5 @@ if __name__ == "__main__":
         
         
         
-
-
-
-
 
 
