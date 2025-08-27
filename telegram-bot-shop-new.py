@@ -29,12 +29,14 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 def _safe_callback(val):
     import re
     val = str(val)
-    val = re.sub(r'[^\w\-]', '', val)
+    val = re.sub(r'[^\w\-\u0600-\u06FF]', '', val)
     return val[:20]  # حداکثر 20 کاراکتر
 
 def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
     for color in product_variants.keys():
-        if _safe_callback(color) == safe_color:
+        safe_color_test = _safe_callback(color)
+        logger.info(f"Comparing: '{safe_color}' with '{safe_color_test}' from original '{color}'")
+        if safe_color_test == safe_color:
             return color
     return None
 
@@ -934,6 +936,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     q = update.callback_query
     data = (q.data or "").strip() 
 
+    logger.info(f"Received callback data: {data}")
+
     if data == "menu:back_home":
         await start(update , context) ; return
         
@@ -1002,9 +1006,12 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         if not p or "variants" not in p:
             await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
             return
+        
+        logger.info(f"Looking for color: {color_safe} in variants: {list(p['variants'].keys())}")
     
         color = _unsafe_color(color_safe, p["variants"])
         if not color:
+            logger.error(f"Could not find color for safe_color: {color_safe}")
             await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
             return
     
@@ -1192,5 +1199,6 @@ if __name__ == "__main__":
         
         
         
+
 
 
