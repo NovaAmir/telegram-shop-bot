@@ -29,7 +29,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 def _safe_callback(val):
     import re
     val = str(val)
-    val = re.sub(r'[^\w\-\u0600-\u06FF]', '', val)
+    val = re.sub(r'[^a-zA-Z0-9\u0600-\u06FF\-_]', '', val)
     return val[:20]  # حداکثر 20 کاراکتر
 
 def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
@@ -263,15 +263,52 @@ def category_keyboard(gender : str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def colors_keyboard(gender:str , category:str , product_id:str) -> InlineKeyboardMarkup:
-    product = _find_product(gender , category , product_id)
+def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
+    product = _find_product(gender, category, product_id)
     assert product and "variants" in product
     colors = list(product["variants"].keys())
     rows = []
-    for i in range(0 , len(colors) , 2):
-        chunk = colors[i:i+2]
-        rows.append([InlineKeyboardButton(col , callback_data=f"catalog:color:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(col)}")for col in chunk])
-    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر " , callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
+    for i, color in enumerate(colors):
+        available_sizes = [sz for sz, qty in product["variants"][color]["sizes"].items() if qty > 0]
+        for sz in available_sizes:
+            btn_text = f"{color} | سایز {sz}"
+            rows.append([InlineKeyboardButton(
+                btn_text,
+                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
+            )])
+    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
+    return InlineKeyboardMarkup(rows)
+
+def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
+    product = _find_product(gender, category, product_id)
+    assert product and "variants" in product
+    colors = list(product["variants"].keys())
+    rows = []
+    for i, color in enumerate(colors):
+        available_sizes = [sz for sz, qty in product["variants"][color]["sizes"].items() if qty > 0]
+        for sz in available_sizes:
+            btn_text = f"{color} | سایز {sz}"
+            rows.append([InlineKeyboardButton(
+                btn_text,
+                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
+            )])
+    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
+    return InlineKeyboardMarkup(rows)
+
+def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
+    product = _find_product(gender, category, product_id)
+    assert product and "variants" in product
+    colors = list(product["variants"].keys())
+    rows = []
+    for i, color in enumerate(colors):
+        available_sizes = [sz for sz, qty in product["variants"][color]["sizes"].items() if qty > 0]
+        for sz in available_sizes:
+            btn_text = f"{color} | سایز {sz}"
+            rows.append([InlineKeyboardButton(
+                btn_text,
+                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
+            )])
+    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -401,19 +438,15 @@ async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , ge
     await q.edit_message_text(f"انتخاب جنسیت: {'👨 مردانه' if gender=='men' else '👩 زنانه'}\nحالا نوع محصول رو انتخاب کن:", reply_markup=category_keyboard(gender))
 
 
-async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str) -> None:
+async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str) -> None:
     q = update.callback_query
     await q.answer()
-    items = CATALOG.get(gender , {}).get(category , [])
+    items = CATALOG.get(gender, {}).get(category, [])
     if not items:
-        await q.edit_message_text("فعلا محصولی در این دسته نیست" , reply_markup = category_keyboard(gender))
+        await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
         return
 
     for p in items:
-        if "variants" in p:
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
-        else:
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         photo = _product_photo_for_list(p)
         caption = f"{p['name']}"
 
@@ -439,7 +472,7 @@ async def show_products(update:Update , context:ContextTypes.DEFAULT_TYPE , gend
             [InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}")],
             [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
         ])
-   )
+    )
     
 async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str, product_id:str) -> None:
     q = update.callback_query
@@ -998,20 +1031,21 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         if len(parts) != 7:
             await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
             return
-        _, _, gender, category_safe, product_id, color_safe, size = parts
+        _, _, gender, category_safe, product_id, color_index, size = parts
         category = CATEGORY_MAP.get(category_safe, category_safe)
     
-        # پیدا کردن محصول و بازیابی رنگ اصلی
         p = _find_product(gender, category, product_id)
         if not p or "variants" not in p:
             await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
             return
-        
-        logger.info(f"Looking for color: {color_safe} in variants: {list(p['variants'].keys())}")
     
-        color = _unsafe_color(color_safe, p["variants"])
-        if not color:
-            logger.error(f"Could not find color for safe_color: {color_safe}")
+        try:
+            color_index = int(color_index)
+            colors = list(p["variants"].keys())
+            if color_index < 0 or color_index >= len(colors):
+                raise ValueError("Invalid color index")
+            color = colors[color_index]
+        except (ValueError, IndexError):
             await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
             return
     
@@ -1191,14 +1225,4 @@ def telegram_webhook():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
-        
-        
-        
-        
-        
-        
-        
-
-
 
