@@ -222,12 +222,11 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
 
 CATALOG = STORE.get_catalog(CATALOG)
 
-# ...existing code...
 CATEGORY_MAP = {}
 for gender in CATALOG:
     for cat in CATALOG[gender]:
         CATEGORY_MAP[_safe_callback(cat)] = cat
-# ...existing code...
+logger.info(f"CATEGORY_MAP contents: {CATEGORY_MAP}")
 
 
 #     منوها
@@ -970,6 +969,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     data = (q.data or "").strip() 
 
     logger.info(f"Received callback data: {data}")
+    logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
 
     if data == "menu:back_home":
         await start(update , context) ; return
