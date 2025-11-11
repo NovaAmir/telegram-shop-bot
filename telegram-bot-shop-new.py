@@ -146,7 +146,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              "price" : 3_000_000 ,
              "sizes":{"L":4 , "XL":5 , "XXL":3}
              },
-             {"id":"men-shirt-model SB-SS-4513" , 
+             {"id":"men-shirt-model-SB-SS-4513" , 
               "name":"پیراهن آستین بلند مردانه مدل SB-SS-4513" , 
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/2e31b5f7959ecb020cd95af79c22bb97a96d7c46_1703611532.webp" , 
               "price": 2_500_000 ,
@@ -154,14 +154,14 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
               }
         ],
         "تی شرت" : [
-            {"id":"men-Tshirt-model TS63 B" , 
-             "name":"تی شرت اورسایز مردانه نوزده نودیک مدل TS63 B" , 
+            {"id":"men-Tshirt-model-TS63-B" , 
+             "name":"تی شرت اورسایز مردانه نوزده نودیک مدل TS63-B" , 
              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/6d5e77c9b3f25d11050c9e714675678b38314efa_1755035663.webp" , 
              "price" : 900_000 ,
              "sizes":{"L":3 , "XL":4 , "XXL":4}
              },
-             {"id":"men-Tshirt-model TS1962 B" , 
-              "name":"تی شرت ورزشی مردانه نوزده نودیک مدل TS1962 B" ,
+             {"id":"men-Tshirt-model-TS1962-B" , 
+              "name":"تی شرت ورزشی مردانه نوزده نودیک مدل TS1962-B" ,
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/deaaf226e0ef806723b4972f933cfffc6e5e9a76_1675938042.webp" , 
               "variants":{
                   "مشکی":{
@@ -187,7 +187,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              "price": 9_100_000 , 
              "sizes" : {"40":2 , "41":0 , "42":3 , "43":2 , "44":1}
              },
-             {"id":"women-shoe-3Fashion M.D" , 
+             {"id":"women-shoe-3Fashion-M.D" , 
               "name":"کفش روزمره زنانه مدل Fashion سه چسب M.D" , 
               "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/285ea7731ca73c3dc525744bfda9cc41d2be5183_1635272433.webp" , 
               "variants":{
@@ -206,13 +206,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              }
         ],
         "شلوار":[
-            {"id":"women-pants-mazerati_raste_kerem" , 
+            {"id":"women-pants-mazerati-raste-kerem" , 
              "name":"شلوار زنانه مدل ریتا مازراتی راسته رنگ کرم روشن" ,
              "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/4cda707f7d8e25ccdfdc4fab12d0e43552624376_1722364117.webp" , 
              "price":560_000 , 
              "sizes":{"44":3 , "46":3 , "50":2 , "52":4}
              },
-             {"id":"women-pants-bag_lenin" , 
+             {"id":"women-pants-bag-lenin" , 
               "name":"شلوار زنانه مدل بگ لینن کنفی" , 
               "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/55ceaeb80ec2d0464a47880afd966769f00e3faa_1748870325.webp" , 
               "price":800_000 , 
@@ -319,10 +319,10 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
 
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
-    if p.get("thumbnail"):
-        return p["thumbnail"]
     if p.get("photo"):
         return p["photo"]
+    if p.get("thumbnail"):
+        return p["thumbnail"]
     if "variants" in p and p["variants"]:
         first_color = next(iter(p["variants"].values()))
         return first_color.get("photo")
@@ -428,10 +428,10 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
         # ساخت دکمه انتخاب مناسب هر محصول
         if "variants" in p:
             # محصول هم رنگ دارد هم سایز
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{_safe_callback(p['id'])}")
         else:
             # محصول فقط سایز دارد
-            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{p['id']}")
+            btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{_safe_callback(p['id'])}")
 
         keyboard = InlineKeyboardMarkup([[btn]])
 
@@ -1018,8 +1018,12 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         await show_products(update , context , gender , category) ; return
     
     if data.startswith("catalog:select:"):
-        _, _, gender, category_safe, product_id = data.split(":", 4)
+        parts = data.split(":", 4)
+        if len(parts) != 5:
+            ...
+        _, _, gender, category_safe, product_id = parts
         category = CATEGORY_MAP.get(category_safe , category_safe)
+        product_id = product_id_safe
         product = _find_product(gender , category , product_id)
         if product and "variants" in product:
             await ask_color_and_size(update, context, gender, category, product_id)
@@ -1294,3 +1298,4 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
