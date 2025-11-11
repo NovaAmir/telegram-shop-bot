@@ -1269,8 +1269,9 @@ def telegram_webhook():
         data = request.get_json(force=True)
         # استفاده از application.update_queue.put_nowait برای فرستادن آپدیت به لوپ PTB
         # تا از خطا در thread اصلی وب‌هو‌ک جلوگیری شود.
+        logger.info("Received Update JSON: %s", data)
         update = Update.de_json(data, application.bot)
-        application.update_queue.put_nowait(update) 
+        asyncio.run_coroutine_threadsafe(application.process_update(update), LOOP) 
         return "OK", 200
     except Exception as e:
         logger.exception("webhook handler error: %s", e)
