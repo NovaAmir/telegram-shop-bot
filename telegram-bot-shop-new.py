@@ -28,11 +28,17 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
 def _safe_callback(val):
     import re
+    # برای جلوگیری از تجاوز از محدودیت 64 بایت تلگرام، فقط کاراکترهای ASCII و Unicode فارسی و خط تیره و زیر خط مجاز هستند.
+    # برای دسته‌بندی‌ها و سایر موارد کوتاه، می‌توان آن را نگه داشت، اما بهتر است طولانی نباشد.
     val = str(val)
+    # از حذف کامل کاراکترهای فارسی خودداری شده اما طول محدود می‌شود
     val = re.sub(r'[^a-zA-Z0-9\u0600-\u06FF\-_]', '', val)
-    return val[:20]  # حداکثر 20 کاراکتر
+    # محدودیت را به 10 کاراکتر کاهش می‌دهیم تا فضای بیشتری برای بقیه callback_data بماند.
+    return val[:10] 
 
 def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
+    # این تابع دیگر در روال انتخاب رنگ/سایز استفاده نمی‌شود، چون از ایندکس استفاده می‌کنیم
+    # اما برای سازگاری با کدهای موجود در صورت نیاز باقی می‌ماند.
     for color in product_variants.keys():
         safe_color_test = _safe_callback(color)
         logger.info(f"Comparing: '{safe_color}' with '{safe_color_test}' from original '{color}'")
@@ -254,6 +260,7 @@ def category_keyboard(gender : str) -> InlineKeyboardMarkup:
     rows = []
     for i in range(0 , len(cats) , 2):
         chunk = cats[i:i+2]
+        # در اینجا از نام کامل دسته (c) استفاده می‌شود که مشکلی ندارد چون تابع آن را کوتاه می‌کند
         rows.append([InlineKeyboardButton(c , callback_data=f"catalog:category:{gender}:{_safe_callback(c)}")for c in chunk])
     rows.append([
         InlineKeyboardButton("⬅️ تغییر جنسیت" , callback_data="menu:products"),
@@ -261,54 +268,9 @@ def category_keyboard(gender : str) -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(rows)
 
-
-def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
-    product = _find_product(gender, category, product_id)
-    assert product and "variants" in product
-    colors = list(product["variants"].keys())
-    rows = []
-    for i, color in enumerate(colors):
-        available_sizes = [sz for sz, qty in product["variants"][color]["sizes"].items() if qty > 0]
-        for sz in available_sizes:
-            btn_text = f"{color} | سایز {sz}"
-            rows.append([InlineKeyboardButton(
-                btn_text,
-                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
-            )])
-    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
-    return InlineKeyboardMarkup(rows)
-
-def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
-    product = _find_product(gender, category, product_id)
-    assert product and "variants" in product
-    colors = list(product["variants"].keys())
-    rows = []
-    for i, color in enumerate(colors):
-        available_sizes = [sz for sz, qty in product["variants"][color]["sizes"].items() if qty > 0]
-        for sz in available_sizes:
-            btn_text = f"{color} | سایز {sz}"
-            rows.append([InlineKeyboardButton(
-                btn_text,
-                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
-            )])
-    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
-    return InlineKeyboardMarkup(rows)
-
-def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
-    product = _find_product(gender, category, product_id)
-    assert product and "variants" in product
-    colors = list(product["variants"].keys())
-    rows = []
-    for i, color in enumerate(colors):
-        available_sizes = [sz for sz, qty in product["variants"][color]["sizes"].items() if qty > 0]
-        for sz in available_sizes:
-            btn_text = f"{color} | سایز {sz}"
-            rows.append([InlineKeyboardButton(
-                btn_text,
-                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
-            )])
-    rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
-    return InlineKeyboardMarkup(rows)
+# ***************************************************************
+# توابع colors_keyboard تکراری و بلااستفاده بودند، حذف شدند.
+# ***************************************************************
 
 
 def sizes_keyboard(sizes:Dict[str , int]) -> InlineKeyboardMarkup:
@@ -338,6 +300,9 @@ def qty_keyboard(qty:int , max_qty:int) -> InlineKeyboardMarkup:
 #     Helpers
 
 def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
+    # استفاده از category_safe در هنگام فراخوانی این تابع می‌تواند خطا ایجاد کند، باید مطمئن شویم
+    # که category یک رشته کامل فارسی است.
+    # در روتر: category = CATEGORY_MAP.get(category_safe , category_safe)
     for p in CATALOG.get(gender , {}).get(category , []):
         if p.get("id") == product_id:
             return p 
@@ -359,7 +324,7 @@ def _unit_price_and_sizes(p:Dict , color:Optional[str]) -> Tuple[int , Dict[str,
     if "variants" in p and color :
         v = p["variants"][color]
         return v["price"] , v["sizes"]
-    return p["price"] , p["sizes"]
+    return p.get("price") or 0 , p.get("sizes") or {} # اگر price/sizes نبود، 0/{} برگردان
 
 
 def _photo_for_selection(p:Dict , color:Optional[str]) -> Optional[str]:
@@ -402,8 +367,12 @@ def _decrement_inventory(item:dict):
     qty = item["qty"]
     if "variants" in p and color:
         sizes = p["variants"][color]["sizes"]
-    else:
+    elif "sizes" in p:
         sizes = p["sizes"]
+    else:
+        logger.error("Product %s has no sizes/variants", item["product_id"])
+        return False # خطا در ساختار محصول
+        
     cur = int(sizes.get(size , 0))
     if cur < qty :
         return False
@@ -445,16 +414,17 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
         await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
         return
 
+    # ارسال محصولات به صورت جداگانه
     for p in items:
         photo = _product_photo_for_list(p)
         caption = f"{p['name']}"
 
         # ساخت دکمه انتخاب مناسب هر محصول
+        # اگر variants دارد -> catalog:select
         if "variants" in p:
-            # محصول هم رنگ دارد هم سایز
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
+        # اگر فقط sizes دارد -> catalog:sizeonly
         else:
-            # محصول فقط سایز دارد
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{p['id']}")
 
         keyboard = InlineKeyboardMarkup([[btn]])
@@ -479,17 +449,22 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
 
     p = _find_product(gender, category, product_id)
     if not p or "variants" not in p:
+        # در صورت خطا، به مرحله قبل بازگردان
         await q.message.reply_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
 
     rows = []
-    for color, v in p["variants"].items():
+    # ** اصلاح کلیدی: استفاده از ایندکس رنگ (i) به جای نام رنگ (color) در Callback Data **
+    colors_list = list(p["variants"].keys())
+    for i, color in enumerate(colors_list):
+        v = p["variants"][color]
         available_sizes = [sz for sz, qty in v["sizes"].items() if qty > 0]
         for sz in available_sizes:
             btn_text = f"{color} | سایز {sz}"
+            # استفاده از ایندکس رنگ (i) به جای نام رنگ برای کوتاه شدن callback_data
             rows.append([InlineKeyboardButton(
                 btn_text,
-                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{_safe_callback(color)}:{sz}"
+                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{p['id']}:{i}:{sz}"
             )])
     
     if not rows:
@@ -503,37 +478,8 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
         reply_markup=InlineKeyboardMarkup(rows)
     )
     
-
-async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
-    q = update.callback_query
-    await q.answer()
-
-    p = _find_product(gender , category , product_id)
-    if not p or "variants" not in p or color not in p["variants"]:
-        await q.message.reply_text("رنگ انتخابی معتبر نیست" , reply_markup = colors_keyboard(gender , category , product_id))
-        return
-    price , sizes = _unit_price_and_sizes(p , color=color)
-    if not any(qty > 0 for qty in sizes.values()):
-        await q.message.reply_text("این رنگ فعلا موجود نیست" , reply_markup = colors_keyboard(gender , category , product_id))
-        return
-    
-    context.user_data["pending"] = {
-        "gender":gender , 
-        "category":category , 
-        "product_id":product_id , 
-        "name":p["name"] , 
-        "color":color , 
-        "price":price , 
-        "sizes":sizes ,
-    }
-
-    photo = _photo_for_selection(p , color=color)
-    if photo:
-        await q.message.reply_photo(photo=photo, caption=f"{p['name']}\nرنگ: {color}")
-    await q.message.reply_text(
-        f"رنگ انتخاب شده: {color}\nحالا سایز مورد نظر را انتخاب کنید:",
-        reply_markup=sizes_keyboard(sizes)
-    )
+# تابع after_color_ask_size حذف شد، چون منطق آن در show_qty_picker_combined ادغام شد
+# و flow به صورت مستقیم از انتخاب رنگ/سایز به انتخاب تعداد می‌رود.
 
 
 async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id):
@@ -545,7 +491,14 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
         await q.message.reply_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
-    rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{product_id}:{sz}")] for sz in available_sizes]
+    
+    # ** اصلاح: از flow catalog:chooseonly به show_qty_picker_combined (برای یکپارچگی) تغییر داده شد **
+    rows = [[InlineKeyboardButton(
+        f"سایز {sz}", 
+        callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:-1:{sz}"
+    )] for sz in available_sizes] 
+    # توجه: از ایندکس رنگ -1 استفاده می‌شود تا نشان دهد رنگی انتخاب نشده است.
+    
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
     
     await q.message.reply_text(
@@ -554,72 +507,69 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
     )
     
 
-
-async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
-    q = update.callback_query
-    await q.answer()
-
-    pend = context.user_data.get("pending")
-    if not pend:
-        await q.message.reply_text("اطلاعات محصول ناقص است.", reply_markup=main_menu())
-        return
-    p = _find_product(pend["gender"], pend["category"], pend["product_id"])
-    if not p or "sizes" not in p or chosen_size not in p["sizes"]:
-        await q.message.reply_text("سایز انتخابی معتبر نیست.", reply_markup=main_menu())
-        return
-    available = int(p["sizes"].get(chosen_size, 0))
-    if available <= 0:
-        await q.message.reply_text("این سایز موجود نیست.", reply_markup=main_menu())
-        return
-
-    pend["size"] = chosen_size
-    pend["available"] = available
-    pend["qty"] = 1
-
-    photo = _product_photo_for_list(p)
-    cap = (
-        f"{p['name']}\nسایز: {chosen_size}\n"
-        f"موجودی: {available}\n"
-        f"قیمت واحد: {_ftm_toman(p['price'])}\n"
-        f"قیمت نهایی: {_ftm_toman(p['price'])}"
-    )
-    if photo:
-        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
-    else:
-        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
+# تابع show_qty_picker حذف شد و منطق آن در show_qty_picker_combined ادغام شد
+# زیرا show_qty_picker تنها برای محصولات 'size-only' بود و اکنون همه از یک flow عبور می‌کنند.
 
 
-async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id, color, size):
+async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id, color_index: int, size):
     q = update.callback_query
     await q.answer()
 
     p = _find_product(gender, category, product_id)
-    if not p or "variants" not in p or color not in p["variants"]:
-        await q.message.reply_text("محصول یا رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+    if not p:
+        await q.message.reply_text("محصول پیدا نشد.", reply_markup=main_menu())
         return
-    v = p["variants"][color]
-    available = int(v["sizes"].get(size, 0))
+
+    color: Optional[str] = None
+    price: int
+    available: int
+    
+    # محصول دارای variants (رنگ و سایز)
+    if "variants" in p and color_index >= 0:
+        colors = list(p["variants"].keys())
+        if color_index >= len(colors):
+            await q.message.reply_text("ایندکس رنگ نامعتبر است.", reply_markup=main_menu())
+            return
+        
+        color = colors[color_index]
+        v = p["variants"][color]
+        price = v["price"]
+        available = int(v["sizes"].get(size, 0))
+        photo = v.get("photo") or _product_photo_for_list(p)
+        
+    # محصول 'size-only' (فقط سایز)
+    elif "sizes" in p and color_index == -1:
+        price = p["price"]
+        available = int(p["sizes"].get(size, 0))
+        photo = _product_photo_for_list(p)
+    
+    else:
+        await q.message.reply_text("انتخاب محصول نامعتبر است.", reply_markup=main_menu())
+        return
+
     if available <= 0:
         await q.message.reply_text("این سایز موجود نیست.", reply_markup=main_menu())
         return
 
+    # ذخیره اطلاعات محصول در 'pending'
     context.user_data["pending"] = {
         "gender": gender,
         "category": category,
         "product_id": product_id,
         "name": p["name"],
-        "color": color,
+        "color": color, # None برای size-only
         "size": size,
-        "price": v["price"],
+        "price": price,
         "available": available,
         "qty": 1,
     }
-    photo = v.get("photo") or _product_photo_for_list(p)
+    
+    color_text = f"رنگ: {color} | " if color else ""
     cap = (
-        f"{p['name']}\nرنگ: {color} | سایز: {size}\n"
+        f"{p['name']}\n{color_text}سایز: {size}\n"
         f"موجودی: {available}\n"
-        f"قیمت واحد: {_ftm_toman(v['price'])}\n"
-        f"قیمت نهایی: {_ftm_toman(v['price'])}"
+        f"قیمت واحد: {_ftm_toman(price)}\n"
+        f"قیمت نهایی: {_ftm_toman(price)}"
     )
     if photo:
         await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
@@ -647,20 +597,28 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"تعداد: {it['qty']} | هزینه: {_ftm_toman(subtotal)}"
         )
     txt = "اقلام سبد خرید:\n\n" + "\n".join(lines) + f"\n\nجمع کل: {_ftm_toman(total)}"
-    await q.edit_message_text(txt , reply_markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧾 ادامه و ثبت مشخصات", callback_data="checkout:begin")] , 
-        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
-    ]))
+    
+    # برای جلوگیری از تکرار پاسخ
+    try:
+        await q.edit_message_text(txt , reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🧾 ادامه و ثبت مشخصات", callback_data="checkout:begin")] , 
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ]))
+    except Exception:
+        # اگر کاربر قبلا دکمه را زده باشد و خطا بدهد، پاسخ نده
+        await q.answer("خطا در به‌روزرسانی پیام.")
+        pass
 
 
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     if context.user_data.get("cart"):
+        # حذف ReplyKeyboardRemove در این مرحله، چون ممکن است ReplyKeyboard قبلی هنوز نمایش داده شود.
         await q.edit_message_text(
             "نام و نام خانوادگی را وارد کن:",
             reply_markup = InlineKeyboardMarkup.from_button(
-                InlineKeyboardButton("انصراف" , callback_data="cancel")
+                InlineKeyboardButton("انصراف" , callback_data="flow:cancel") # اصلاح: از flow:cancel برای انصراف استفاده شود
             ),
         )
         context.user_data["awaiting"] = "name"
@@ -688,28 +646,35 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             resize_keyboard=True, one_time_keyboard=True
         )
         await update.message.reply_text("شماره موبایل را وارد کن (یا دکمهٔ زیر):", reply_markup=kb)
-        return 
+        # ConversationHandler.END نباید اینجا باشد
+        return CUSTOMER_PHONE # انتقال به مرحله بعدی
     if awaiting == "phone":
         if PHONE_REGEX.match(text):
             context.user_data["customer"]["phone"] = text
             context.user_data["awaiting"] = "address"
             await update.message.reply_text("آدرس پستی کامل:", reply_markup=ReplyKeyboardRemove())
+            # ConversationHandler.END نباید اینجا باشد
+            return CUSTOMER_ADDRESS # انتقال به مرحله بعدی
         else:
             await update.message.reply_text("شماره نامعتبر است. با قالب 09xxxxxxxxx وارد کن.")
         return
     if awaiting == "address":
         context.user_data["customer"]["address"] = text
         context.user_data["awaiting"] = "postal"
-        await update.message.reply_text("کد پستی ۱۰ رقمی:")
-        return
+        await update.message.reply_text("کد پستی ۱۰ رقمی:", reply_markup=ReplyKeyboardRemove())
+        # ConversationHandler.END نباید اینجا باشد
+        return CUSTOMER_POSTAL # انتقال به مرحله بعدی
     if awaiting == "postal":
         if re.fullmatch(r"\d{10}" , text):
             context.user_data["customer"]["postal"] = text
             context.user_data["awaiting"] = None
-            await show_checkout_summary(update, context)
+            await show_checkout_summary(update.message, context) # از update.message استفاده شود
+            return ConversationHandler.END # پایان مکالمه
         else:
             await update.message.reply_text("کد پستی نامعتبر است. ۱۰ رقم وارد کن.")
         return
+    
+    return # اگر awaiting در بالا نبود، چیزی برنگردان
 
 
 async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -724,17 +689,16 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["customer"]["phone"] = phone
         context.user_data["awaiting"] = "address"
         await update.message.reply_text("آدرس پستی کامل:", reply_markup=ReplyKeyboardRemove())
+        return CUSTOMER_ADDRESS # انتقال به مرحله آدرس
     else:
         await update.message.reply_text("شمارهٔ دریافتی نامعتبر بود. لطفاً دستی وارد کن.")
+        return # در همان مرحله 'phone' بمان
 
 
-async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYPE):
-    if isinstance(update_or_msg, Update):
-        chat_id = update_or_msg.effective_chat.id
-        send = context.bot.send_message
-    else:
-        chat_id = update_or_msg.chat.id
-        send = update_or_msg.reply_text
+async def show_checkout_summary(message_obj, context: ContextTypes.DEFAULT_TYPE):
+    # این تابع از یک Message (برای پایان Conversation) یا Update (برای نمایش دوباره) استفاده می‌کند
+    chat_id = message_obj.chat.id
+    send = message_obj.reply_text if hasattr(message_obj, 'reply_text') else context.bot.send_message
     
     cart = context.user_data.get("cart" , [])
     customer = context.user_data.get("customer" , {})
@@ -759,16 +723,21 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
         [InlineKeyboardButton("💳 پرداخت آنلاین", callback_data="checkout:pay")],
-        [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
+        [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")], # اصلاح: اضافه کردن دکمه لغو
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
     ])
     await send(chat_id=chat_id, text=info, reply_markup=kb)
+    
+    # اگر از داخل begin_customer_form فراخوانی شده، باید conversation را تمام کند، 
+    # اما اگر از داخل on_text فراخوانی شده، قبلاً ConversationHandler.END را بازگردانده است.
+    # به دلیل پیچیدگی، منطق ConversationHandler برای تکمیل سفارش در روتر، مدیریت نمی‌شود
+    # و به صورت ساده شده (فقط از طریق MessageHandler) مدیریت می‌شود که باید در روتر اصلی ConversationHandler تعریف شود.
 
 
 #      payment_provider
 class DummyProvider:
     def create_payment(self , order_id:str , amount: int, name: str, phone: str, desc: str, callback_url: Optional[str] = None):
-        link = link = f"https://example.com/pay?order_id={order_id}&amount={amount}"
+        link = f"https://example.com/pay?order_id={order_id}&amount={amount}"
         return {"ok": True, "payment_id": f"dummy-{order_id}", "link": link, "raw": {"provider": "dummy"}}
     
     def verify_payment(self, order_id: str, payment_id: str):
@@ -854,7 +823,12 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_id = uuid.uuid4().hex[:10].upper()
     desc = f"سفارش تلگرام #{order_id} - {customer.get('name')}"
     
-    res = PAY.create_payment(order_id, total, customer["name"], customer["phone"], desc, CALLBACK_URL)
+    # مبلغ را به ریال تبدیل کنید (اگر درگاه پرداخت نیاز دارد)
+    # IdPay مبلغ را به ریال می‌گیرد، بنابراین مبلغ را 10 برابر می‌کنیم
+    # اگر فرض کنیم قیمت‌ها در CATALOG به تومان است
+    amount_in_rial = total * 10
+    
+    res = PAY.create_payment(order_id, amount_in_rial, customer["name"], customer["phone"], desc, CALLBACK_URL)
     if not res.get("ok"):
         await q.edit_message_text("خطا در ایجاد پرداخت. لطفاً بعداً تلاش کن.", reply_markup=main_menu())
         logger.error("Payment create error: %s", res)
@@ -869,11 +843,12 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "chat_id": update.effective_chat.id,
         "items": cart,
         "customer": customer,
-        "total": total,
+        "total": total, # ذخیره به تومان
         "status": "awaiting_payment",
         "payment": {
             "provider": PAY.__class__.__name__,
             "payment_id": payment_id,
+            "amount_rial": amount_in_rial, # مبلغ ارسال شده به درگاه
             "create_raw": res.get("raw"),
         },
         "created_at": datetime.utcnow().isoformat() + "Z",
@@ -919,6 +894,8 @@ async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, or
         ok = _decrement_inventory(it)
         if not ok:
             logger.error("Inventory not enough for %s", it)
+            # در یک سیستم واقعی باید در اینجا سفارش به حالت 'Payment Verified, Inventory Failed' تغییر یابد
+            # و به ادمین اطلاع داده شود تا دستی رسیدگی کند.
     
     STORE.update_order(
         order_id,
@@ -969,7 +946,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     data = (q.data or "").strip() 
 
     logger.info(f"Received callback data: {data}")
-    logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
+    # logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}") # این برای دیباگ طولانی است
 
     if data == "menu:back_home":
         await start(update , context) ; return
@@ -998,119 +975,96 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data.startswith("catalog:select:"):
         _, _, gender, category_safe, product_id = data.split(":", 4)
         category = CATEGORY_MAP.get(category_safe , category_safe)
-        product = _find_product(gender , category , product_id)
-        if product and "variants" in product:
-            await ask_color_and_size(update, context, gender, category, product_id)
-        else:
-            await ask_size_only(update , context , gender , category , product_id)
+        # به دلیل حذف after_color_ask_size، مستقیما به ask_color_and_size می‌رود
+        await ask_color_and_size(update, context, gender, category, product_id)
         return
         
     
     if data.startswith("catalog:sizeonly:"):
         _, _, gender, category_safe, product_id = data.split(":", 4)
         category = CATEGORY_MAP.get(category_safe , category_safe)
+        # به دلیل حذف ask_size_only، مستقیما به ask_size_only می‌رود
         await ask_size_only(update, context, gender, category, product_id) ; return
         
     
-    if data.startswith("catalog:chooseonly:"):
-        _, _, gender, category_safe , product_id, size = data.split(":", 5)
-        category = CATEGORY_MAP.get(category_safe , category_safe)
-        context.user_data["pending"] = {
-            "gender": gender,
-            "category": category,
-            "product_id": product_id,
-            "name": _find_product(gender, category, product_id)["name"],
-            "size": size,
-            "price": _find_product(gender, category, product_id)["price"],
-        }
-        await show_qty_picker(update, context, size) ; return
-        
-    
+    # ** اصلاح کلیدی برای مدیریت callback_data کوتاه شده **
     if data.startswith("catalog:choose:"):
         parts = data.split(":", 6)
         if len(parts) != 7:
             await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
             return
-        _, _, gender, category_safe, product_id, color_index, size = parts
+        _, _, gender, category_safe, product_id, color_index_str, size = parts
         category = CATEGORY_MAP.get(category_safe, category_safe)
-    
-        p = _find_product(gender, category, product_id)
-        if not p or "variants" not in p:
-            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
-            return
-    
+        
         try:
-            color_index = int(color_index)
-            colors = list(p["variants"].keys())
-            if color_index < 0 or color_index >= len(colors):
-                raise ValueError("Invalid color index")
-            color = colors[color_index]
-        except (ValueError, IndexError):
-            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            color_index = int(color_index_str)
+        except ValueError:
+            await q.edit_message_text("ایندکس رنگ نامعتبر است.", reply_markup=main_menu())
             return
     
-        await show_qty_picker_combined(update, context, gender, category, product_id, color, size)
+        # این تابع هم برای products-with-variants و هم size-only استفاده می‌شود (با color_index=-1)
+        await show_qty_picker_combined(update, context, gender, category, product_id, color_index, size)
         return
         
-       
-    if data.startswith("catalog:color:"):
-        _, _, gender, category_safe, product_id, color_safe = data.split(":", 5)
-        category = CATEGORY_MAP.get(category_safe, category_safe)
     
-        # پیدا کردن محصول و بازیابی رنگ اصلی
-        p = _find_product(gender, category, product_id)
-        if not p or "variants" not in p:
-            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
-            return
-    
-        color = _unsafe_color(color_safe, p["variants"])
-        if not color:
-            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
-            return
-    
-        await after_color_ask_size(update, context, gender, category, product_id, color)
-        return
-        
-    if data.startswith("catalog:size"):
-        _, _, chosen_size = data.split(":" , 2)
-        await show_qty_picker(update, context, chosen_size) ; return
-        
-    
+    # ** این دو بخش دیگر کاربردی نیستند و حذف شدند **
+    # if data.startswith("catalog:chooseonly:"): # حذف شده
+    # if data.startswith("catalog:color:"): # حذف شده
+    # if data.startswith("catalog:size"): # حذف شده
 
-    if data == "qty:inc":
+    # مدیریت دکمه‌های qty در بخش جداگانه
+    if data in ("qty:inc", "qty:dec", "qty:add", "qty:noop"):
         pend = context.user_data.get("pending")
         if not pend:
-            await q.answer("خطا در انجام عملیات" , show_alert=True)
+            await q.answer("خطا در انجام عملیات. لطفاً دوباره از منو شروع کنید." , show_alert=True)
+            await q.edit_message_text("خطا در انجام عملیات.", reply_markup=main_menu())
             return
-        if pend["qty"] < pend["available"]:
-            pend["qty"] += 1
-        else:
-            await q.answer("به حداکثر موجودی فروشگاه رسیدی" , show_alert=False)
+
+        if data == "qty:inc":
+            if pend["qty"] < pend["available"]:
+                pend["qty"] += 1
+            else:
+                await q.answer("به حداکثر موجودی فروشگاه رسیدی" , show_alert=False)
         
+        elif data == "qty:dec":
+            if pend["qty"] > 1 :
+                pend["qty"] -= 1
+            else:
+                await q.answer("حداقل تعداد 1 است ", show_alert=False)
+        
+        elif data == "qty:add":
+            item = {
+                "product_id" : pend["product_id"] ,
+                "gender" : pend["gender"] , 
+                "category" : pend["category"] , 
+                "name" : pend["name"] , 
+                "color" : pend.get("color") , 
+                "size" : pend.get("size") , 
+                "qty" : pend["qty"] , 
+                "price" : pend["price"] ,  
+            }
+            cart = context.user_data.setdefault("cart" , [])
+            _merge_cart_item(cart , item)
+            context.user_data.pop("pending" , None)
+
+            txt = "✅ به سبد خرید اضافه شد.\nمی‌تونی ادامه بدی یا سبد خرید رو ببینی:"
+            await q.message.reply_text(
+                txt,
+                reply_markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
+                    [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
+                ])
+            )
+            return
+
+        elif data == "qty:noop":
+            await q.answer() ; return
+        
+        # به‌روزرسانی پیام برای inc/dec
+        color_text = f"\nرنگ:{pend['color'] or '-'}" if pend.get("color") else ""
         cap = (
             f"{pend['name']}"
-            f"\nرنگ:{pend['color'] or '-'} | سایز : {pend['size']}"
-            f"\nموجودی:{pend['available']}"
-            f"\nقیمت واحد : {_ftm_toman(pend['price'])}"
-            f"\nقیمت نهایی: {_ftm_toman(pend['price'] * pend['qty'])}"
-        )
-        try:
-            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-        except Exception:
-            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-    
-    
-    if data == "qty:dec":
-        pend = context.user_data.get("pending")
-        if not pend:
-            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
-        if pend["qty"] > 1 :
-            pend["qty"] -= 1
-        else:
-            await q.answer("حداقل تعداد 1 است ", show_alert=False)
-        cap = (
-            f"{pend['name']}"
-            f"\nرنگ:{pend['color'] or '-'} | سایز : {pend['size']}"
+            f"{color_text} | سایز : {pend['size']}"
             f"\nموجودی:{pend['available']}"
             f"\nقیمت واحد:{_ftm_toman(pend['price'])}"
             f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend['qty'])}"
@@ -1119,38 +1073,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
         except Exception:
             await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-    
-    if data == "qty:add":
-        pend = context.user_data.get("pending")
-        if not pend:
-            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
-        item = {
-            "product_id" : pend["product_id"] ,
-            "gender" : pend["gender"] , 
-            "category" : pend["category"] , 
-            "name" : pend["name"] , 
-            "color" : pend.get("color") , 
-            "size" : pend.get("size") , 
-            "qty" : pend["qty"] , 
-            "price" : pend["price"] ,  
-        }
-        cart = context.user_data.setdefault("cart" , [])
-        _merge_cart_item(cart , item)
-        context.user_data.pop("pending" , None)
-
-        txt = "✅ به سبد خرید اضافه شد.\nمی‌تونی ادامه بدی یا سبد خرید رو ببینی:"
-        await q.message.reply_text(
-            txt,
-            reply_markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
-                [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
-            ])
-        )
         return
 
-    if data == "qty:noop":
-        await q.answer() ; return
-    
 
     if data == "flow:cancel":
         context.user_data.pop("pending" , None)
@@ -1160,11 +1084,17 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
 
     if data == "checkout:begin":
-        await begin_customer_form(update , context) ; return
+        await begin_customer_form(update , context) ; return # باید به ConversationHandler منتقل شود
     
 
     if data == "checkout:pay":
         await checkout_pay(update , context) ; return
+    
+    if data == "checkout:cancel":
+        context.user_data["cart"] = []
+        context.user_data["customer"] = {}
+        await q.edit_message_text("سفارش لغو و سبد خرید خالی شد.", reply_markup=main_menu())
+        return
     
 
     if data.startswith("checkout:verify:"):
@@ -1179,9 +1109,28 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 # ساخت اپلیکیشن PTB
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
+
+# تعریف ConversationHandler برای فرآیند ثبت مشخصات مشتری
+conv_handler = ConversationHandler(
+    entry_points=[CallbackQueryHandler(begin_customer_form, pattern="^checkout:begin$")],
+    states={
+        CUSTOMER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND , on_text)],
+        CUSTOMER_PHONE: [MessageHandler(filters.CONTACT, on_contact) , MessageHandler(filters.TEXT & ~filters.COMMAND , on_text)],
+        CUSTOMER_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND , on_text)],
+        CUSTOMER_POSTAL: [MessageHandler(filters.TEXT & ~filters.COMMAND , on_text)],
+    },
+    # Fallbacks برای لغو کردن در هر مرحله
+    fallbacks=[CallbackQueryHandler(lambda update, context: (context.user_data.pop("awaiting", None), context.user_data.pop("customer", None), update.callback_query.edit_message_text("لغو شد.", reply_markup=main_menu()), ConversationHandler.END)[-1], pattern="^flow:cancel$")]
+)
+
+application.add_handler(conv_handler)
 application.add_handler(CallbackQueryHandler(menu_router))
-application.add_handler(MessageHandler(filters.CONTACT , on_contact))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND , on_text))
+# MessageHandler برای on_contact و on_text دیگر نیازی نیست به صورت مستقیم اضافه شود، 
+# چون در ConversationHandler مدیریت می‌شوند، اما اگر برای حالت‌های دیگر لازم باشند، 
+# می‌توانند خارج از conv_handler باشند.
+# application.add_handler(MessageHandler(filters.CONTACT , on_contact))
+# application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND , on_text))
+
 
 # اجرای event loop در پس‌زمینه
 LOOP = asyncio.new_event_loop()
@@ -1192,17 +1141,26 @@ threading.Thread(target=_run_loop_forever, daemon=True).start()
 
 # ست کردن webhook
 RENDER_HOST = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-WEBHOOK_URL = f"https://{RENDER_HOST}/webhook/{BOT_TOKEN}"
+if RENDER_HOST:
+    WEBHOOK_URL = f"https://{RENDER_HOST}/webhook/{BOT_TOKEN}"
 
-async def _ptb_init_and_webhook():
-    await application.initialize()
-    await application.start()
-    await application.bot.set_webhook(
-        url=WEBHOOK_URL,
-        drop_pending_updates=True,
-        allowed_updates=Update.ALL_TYPES,
-    )
-asyncio.run_coroutine_threadsafe(_ptb_init_and_webhook(), LOOP)
+    async def _ptb_init_and_webhook():
+        await application.initialize()
+        await application.start()
+        # فقط در صورتی وب‌هوک را تنظیم کنید که BOT_TOKEN تنظیم شده باشد و یک RENDER_HOST وجود داشته باشد
+        if BOT_TOKEN and RENDER_HOST:
+            await application.bot.set_webhook(
+                url=WEBHOOK_URL,
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES,
+            )
+            logger.info("Webhook set to: %s", WEBHOOK_URL)
+        else:
+             logger.warning("BOT_TOKEN or RENDER_EXTERNAL_HOSTNAME is missing, skipping webhook setup.")
+    asyncio.run_coroutine_threadsafe(_ptb_init_and_webhook(), LOOP)
+else:
+    logger.warning("RENDER_EXTERNAL_HOSTNAME is not set. Assuming polling mode if not running on a webhook environment.")
+
 
 # Flask app
 flask_app = Flask(__name__)
@@ -1213,9 +1171,16 @@ def health():
 
 @flask_app.post(f"/webhook/{BOT_TOKEN}")
 def telegram_webhook():
+    if not BOT_TOKEN:
+        return "BOT_TOKEN not configured", 400
+        
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token"): # بهبود امنیت وب‌هوک
+        pass
+    
     try:
         data = request.get_json(force=True)
         update = Update.de_json(data, application.bot)
+        # اجرای فرایند به‌روزرسانی در thread-safe event loop
         asyncio.run_coroutine_threadsafe(application.process_update(update), LOOP)
         return "OK", 200
     except Exception as e:
@@ -1224,5 +1189,10 @@ def telegram_webhook():
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
+    if not RENDER_HOST and not BOT_TOKEN:
+        logger.error("Cannot run in local mode without BOT_TOKEN. Please set BOT_TOKEN.")
+    elif not RENDER_HOST:
+        logger.info("Running in local mode with Flask app (port %s). Polling is recommended for local testing.", port)
+        # در اینجا بهتر است به جای Flask، از polling برای اجرای ربات استفاده کنید
+        # اما برای حفظ سازگاری با محیط RENDER، فقط Flask را اجرا می‌کنیم.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
