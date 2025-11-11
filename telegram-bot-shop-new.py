@@ -119,7 +119,8 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
                  }
                 }    
             },
-            {"id":"men-shoe-Air Force 1 WH 1990" , 
+            # FIX: شناسه محصول حاوی فاصله برای Air Force 1
+            {"id":"men-shoe-Air-Force-1-WH-1990" , 
              "name":"کفش پیاده روی مردانه مدل Air Force 1 WH 1990" ,
              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/5665c3110aee39673eb5818ad1e5460c85a5e4e8_1657457249.webp" , 
              "variants":{
@@ -138,7 +139,8 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              }
         ],
         "پیراهن" : [
-            {"id":"men-shirt-model MDSS-CG3719" , 
+            # FIX: شناسه محصول حاوی فاصله برای MDSS-CG3719
+            {"id":"men-shirt-model-MDSS-CG3719" , 
              "name":"پیراهن آستین بلند مردانه مدل MDSS-CG3719" , 
              "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/9a7c3ddeb6558e2d798678b89df60d6f801be3fd_1723288662.webp" ,
              "price" : 3_000_000 ,
@@ -281,13 +283,6 @@ def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardM
             )])
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
     return InlineKeyboardMarkup(rows)
-
-# تابع colors_keyboard سه بار تکرار شده بود، که تکرارها را حذف می‌کنم.
-# def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
-#     # ...
-
-# def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
-#     # ...
 
 
 def sizes_keyboard(sizes:Dict[str , int]) -> InlineKeyboardMarkup:
@@ -440,10 +435,16 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
 
         keyboard = InlineKeyboardMarkup([[btn]])
 
-        if photo:
-            await q.message.reply_photo(photo=photo, caption=caption, reply_markup=keyboard)
-        else:
-            await q.message.reply_text(caption, reply_markup=keyboard)
+        # FIX: افزودن try/except برای مدیریت خطای ارسال عکس و جلوگیری از توقف نمایش لیست (رفع مشکل شلوار زنانه)
+        try:
+            if photo:
+                await q.message.reply_photo(photo=photo, caption=caption, reply_markup=keyboard)
+            else:
+                await q.message.reply_text(caption, reply_markup=keyboard)
+        except Exception as e:
+            logger.error(f"Failed to send photo for product {p.get('id', 'Unknown')}: {e}. Falling back to text.")
+            await q.message.reply_text(f"⚠️ خطای نمایش عکس:\n{caption}", reply_markup=keyboard)
+
 
     # پیام راهنما و دکمه بازگشت
     await q.message.reply_text(
@@ -472,7 +473,7 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
             rows.append([InlineKeyboardButton(
                 btn_text,
                 # استفاده از ایندکس رنگ (i) به جای نام آن برای کوتاه شدن callback_data
-                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{p['id']}:{i}:{sz}"
+                callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
             )])
     
     if not rows:
@@ -528,6 +529,7 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
         await q.message.reply_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
+    # FIX: اطمینان از اینکه product_id با وجود اصلاحات، به درستی در callback استفاده شود.
     rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{product_id}:{sz}")] for sz in available_sizes]
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
     
@@ -586,7 +588,12 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         f"قیمت نهایی: {_ftm_toman(price)}"
     )
     if photo:
-        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+        # FIX: افزودن try/except برای جلوگیری از توقف برنامه در صورت عدم ارسال عکس
+        try:
+            await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+        except Exception as e:
+            logger.error(f"Failed to send photo in qty picker for {p.get('id')}: {e}. Falling back to text.")
+            await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
     else:
         await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
 
@@ -625,7 +632,12 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
         f"قیمت نهایی: {_ftm_toman(v['price'])}"
     )
     if photo:
-        await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+        # FIX: افزودن try/except برای جلوگیری از توقف برنامه در صورت عدم ارسال عکس
+        try:
+            await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+        except Exception as e:
+            logger.error(f"Failed to send photo in combined qty picker for {p.get('id')}: {e}. Falling back to text.")
+            await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
     else:
         await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
 
