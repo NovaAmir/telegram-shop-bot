@@ -13,6 +13,7 @@ import asyncio
 import threading
 from flask import Flask, request
 
+
 CUSTOMER_NAME, CUSTOMER_PHONE, CUSTOMER_ADDRESS, CUSTOMER_POSTAL = range(4)
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",)
@@ -24,12 +25,14 @@ if not BOT_TOKEN :
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
+
 def _safe_callback(val):
     import re
     val = str(val)
     # اضافه کردن : به کاراکترهای مجاز برای product_id هایی که شامل آن هستند (اختیاری)
     val = re.sub(r'[^a-zA-Z0-9\u0600-\u06FF\-_]', '', val) 
     return val[:50] # افزایش طول مجاز برای product_id
+
 
 def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
     for color in product_variants.keys():
@@ -38,6 +41,7 @@ def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
         if safe_color_test == safe_color:
             return color
     return None
+
 
 #      storge(json)
 DB_FILE = os.getenv("SHOP_DB_FILE" , "shop_db.json")
@@ -95,6 +99,7 @@ class Storge:
         return None
 
 STORE = Storge()
+
 
 #        catalog
 CATALOG: Dict[str,Dict[str,List[Dict]]] = {
@@ -225,6 +230,7 @@ for gender in CATALOG:
         CATEGORY_MAP[_safe_callback(cat)] = cat
 logger.info(f"CATEGORY_MAP contents: {CATEGORY_MAP}")
 
+
 #     منوها
 
 def main_menu() -> InlineKeyboardMarkup:
@@ -234,6 +240,7 @@ def main_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🆘 پشتیبانی", callback_data="menu:support")],]
     return InlineKeyboardMarkup(keyboard)
 
+
 def gender_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
@@ -242,6 +249,7 @@ def gender_keyboard() -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton("🏠 بازگشت به منو" , callback_data="menu:back_home")],
     ])
+
 
 def category_keyboard(gender : str) -> InlineKeyboardMarkup:
     cats = list(CATALOG.get(gender , {}).keys())
@@ -255,6 +263,7 @@ def category_keyboard(gender : str) -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(rows)
 
+
 def sizes_keyboard(sizes:Dict[str , int]) -> InlineKeyboardMarkup:
     available = [s for s,qty in sizes.items() if qty and qty > 0]
     rows = []
@@ -263,6 +272,7 @@ def sizes_keyboard(sizes:Dict[str , int]) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(sz , callback_data=f"catalog:size:{_safe_callback(sz)}") for sz in chunk])
     rows.append([InlineKeyboardButton("❌ انصراف" , callback_data="flow:cancel")])
     return InlineKeyboardMarkup(rows)
+
 
 def qty_keyboard(qty:int , max_qty:int) -> InlineKeyboardMarkup:
     if qty < 1:
@@ -277,6 +287,7 @@ def qty_keyboard(qty:int , max_qty:int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("❌ انصراف" , callback_data="flow:cancel")],
     ])
 
+
 #     Helpers
 
 def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
@@ -284,6 +295,7 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
         if p.get("id") == product_id:
             return p 
     return None
+
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
     # تغییر اعمال شده برای رفع مشکل نمایش ندادن عکس شلوار زنانه
@@ -296,6 +308,7 @@ def _product_photo_for_list(p:Dict) -> Optional[str]:
         return first_color.get("photo")
     return None
 
+
 def _unit_price_and_sizes(p:Dict , color:Optional[str]) -> Tuple[int , Dict[str,int]]:
     if "variants" in p and color :
         v = p["variants"][color]
@@ -304,10 +317,12 @@ def _unit_price_and_sizes(p:Dict , color:Optional[str]) -> Tuple[int , Dict[str,
         return p["price"] , p["sizes"]
     return 0 , {}
 
+
 def _photo_for_selection(p:Dict , color:Optional[str]) -> Optional[str]:
     if color and "variants" in p:
         return p["variants"][color].get("photo") or p.get("thumbnail") or p.get("photo")
     return p.get("photo") or p.get("thumbnail")
+
 
 def _ftm_toman(n:int) -> str :
     try:
@@ -315,8 +330,10 @@ def _ftm_toman(n:int) -> str :
     except Exception:
         return f"{n} تومان"
 
+
 def _calc_cart_total(cart:List[dict]) -> int:
     return sum(it["qty"] * it["price"] for it in cart)
+
 
 def _merge_cart_item(cart:List[dict] , new_item : dict):
     for it in cart:
@@ -330,6 +347,7 @@ def _merge_cart_item(cart:List[dict] , new_item : dict):
             it["qty"] += new_item["qty"]
             return 
     cart.append(new_item)
+
 
 def _decrement_inventory(item:dict):
     p = _find_product(item["gender"] , item["category"] , item["product_id"])
@@ -352,6 +370,7 @@ def _decrement_inventory(item:dict):
     STORE.set_catalog(CATALOG)
     return True
 
+
 #   /start
 
 async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
@@ -362,6 +381,7 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         q = update.callback_query
         await q.edit_message_text(text , reply_markup=main_menu())
 
+
 #     نمایش مراحل
 
 async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
@@ -369,10 +389,12 @@ async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     await q.answer()
     await q.edit_message_text("جنسیت رو انتخاب کن :" , reply_markup=gender_keyboard())
 
+
 async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str) -> None:
     q = update.callback_query
     await q.answer()
     await q.edit_message_text(f"انتخاب جنسیت: {'👨 مردانه' if gender=='men' else '👩 زنانه'}\nحالا نوع محصول رو انتخاب کن:", reply_markup=category_keyboard(gender))
+
 
 async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str) -> None:
     q = update.callback_query
@@ -479,6 +501,7 @@ async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE
         reply_markup=sizes_keyboard(sizes)
     )
 
+
 async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id):
     q = update.callback_query
     await q.answer()
@@ -500,6 +523,7 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
         reply_markup=InlineKeyboardMarkup(rows)
     )
     
+
 
 async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
     q = update.callback_query
@@ -557,6 +581,7 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     else:
         await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
 
+
 async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id, color, size):
     q = update.callback_query
     await q.answer()
@@ -594,6 +619,7 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
     else:
         await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
 
+
 #       cart / checkout
 PHONE_REGEX = re.compile(r"^09\d{9}$")
 
@@ -620,6 +646,7 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
     ]))
 
+
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -636,6 +663,8 @@ async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         await q.edit_message_text("❌ سبد خرید شما خالی است. ابتدا محصولی انتخاب کنید.")
         return ConversationHandler.END
+
+
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -682,6 +711,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return CUSTOMER_POSTAL
     return
 
+
 async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.contact:
         return ConversationHandler.END
@@ -698,6 +728,7 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("شمارهٔ دریافتی نامعتبر بود. لطفاً دستی وارد کن.")
         return CUSTOMER_PHONE
+
 
 async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYPE):
     if isinstance(update_or_msg, Update):
@@ -735,6 +766,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     ])
     await send(chat_id=chat_id, text=info, reply_markup=kb)
 
+
 #      payment_provider
 class DummyProvider:
     def create_payment(self , order_id:str , amount: int, name: str, phone: str, desc: str, callback_url: Optional[str] = None):
@@ -743,6 +775,7 @@ class DummyProvider:
     
     def verify_payment(self, order_id: str, payment_id: str):
         return {"ok": True, "status": "paid", "track_id": f"FAKE-{order_id}", "raw": {}}
+
 
 class IdPayProvider:
     def __init__(self, api_key: str, sandbox: bool = True):
@@ -790,6 +823,7 @@ class IdPayProvider:
         track_id = j.get("track_id") or j.get("payment", {}).get("track_id")
         return {"ok": ok, "status": status, "track_id": track_id, "raw": j}
 
+
 def get_payment_provider():
     provider_name = (os.getenv("PAYMENT_PROVIDER", "idpay") or "idpay").lower()
     if provider_name == "idpay" and os.getenv("IDPAY_API_KEY", "").strip():
@@ -800,6 +834,7 @@ def get_payment_provider():
     return DummyProvider()
 PAY = get_payment_provider()
 CALLBACK_URL = os.getenv("CALLBACK_URL", "").strip() or None
+
 
 #      check out: pay/verify
 async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -858,6 +893,7 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🏠 منو", callback_data="menu:back_home")],
         ])
     )
+
 
 async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
@@ -1144,6 +1180,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 
     await q.edit_message_text("❌ گزینه نامعتبر.", reply_markup=main_menu())
 
+
 #        /start و اجرای برنامه
 # ساخت اپلیکیشن PTB
 application = Application.builder().token(BOT_TOKEN).build()
@@ -1161,6 +1198,7 @@ checkout_conv = ConversationHandler(
     map_to_storage=True,
 )
 
+
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(menu_router))
 
@@ -1169,6 +1207,7 @@ application.add_handler(checkout_conv)
 
 # اگر می‌خواهید پیام‌های متنی خارج از مکالمه هم به start برگردند:
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+
 
 # اجرای event loop در پس‌زمینه
 LOOP = asyncio.new_event_loop()
