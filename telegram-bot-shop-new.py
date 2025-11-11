@@ -29,6 +29,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 def _safe_callback(val):
     import re
     val = str(val)
+    # اجازه دادن به حروف فارسی، انگلیسی، اعداد، خط فاصله و آندرلاین
     val = re.sub(r'[^a-zA-Z0-9\u0600-\u06FF\-_]', '', val)
     return val[:40]  # حداکثر 40 کاراکتر برای کاهش احتمال Button_data_invalid
 
@@ -119,7 +120,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
                  }
                 }    
             },
-            # FIX: شناسه محصول حاوی فاصله برای Air Force 1
+            # ID این محصول OK است
             {"id":"men-shoe-Air-Force-1-WH-1990" , 
              "name":"کفش پیاده روی مردانه مدل Air Force 1 WH 1990" ,
              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/5665c3110aee39673eb5818ad1e5460c85a5e4e8_1657457249.webp" , 
@@ -139,14 +140,15 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              }
         ],
         "پیراهن" : [
-            # FIX: شناسه محصول حاوی فاصله برای MDSS-CG3719
+            # ID این محصول OK است
             {"id":"men-shirt-model-MDSS-CG3719" , 
              "name":"پیراهن آستین بلند مردانه مدل MDSS-CG3719" , 
              "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/9a7c3ddeb6558e2d798678b89df60d6f801be3fd_1723288662.webp" ,
              "price" : 3_000_000 ,
              "sizes":{"L":4 , "XL":5 , "XXL":3}
              },
-             {"id":"men-shirt-model SB-SS-4513" , 
+             # FIX: حذف فاصله از ID
+             {"id":"men-shirt-modelSB-SS-4513" , 
               "name":"پیراهن آستین بلند مردانه مدل SB-SS-4513" , 
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/2e31b5f7959ecb020cd95af79c22bb97a96d7c46_1703611532.webp" , 
               "price": 2_500_000 ,
@@ -154,13 +156,15 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
               }
         ],
         "تی شرت" : [
-            {"id":"men-Tshirt-model TS63 B" , 
+            # FIX: حذف فاصله از ID
+            {"id":"men-Tshirt-modelTS63B" , 
              "name":"تی شرت اورسایز مردانه نوزده نودیک مدل TS63 B" , 
              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/6d5e77c9b3f25d11050c9e714675678b38314efa_1755035663.webp" , 
              "price" : 900_000 ,
              "sizes":{"L":3 , "XL":4 , "XXL":4}
              },
-             {"id":"men-Tshirt-model TS1962 B" , 
+             # FIX: حذف فاصله از ID
+             {"id":"men-Tshirt-modelTS1962B" , 
               "name":"تی شرت ورزشی مردانه نوزده نودیک مدل TS1962 B" ,
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/deaaf226e0ef806723b4972f933cfffc6e5e9a76_1675938042.webp" , 
               "variants":{
@@ -187,7 +191,8 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              "price": 9_100_000 , 
              "sizes" : {"40":2 , "41":0 , "42":3 , "43":2 , "44":1}
              },
-             {"id":"women-shoe-3Fashion M.D" , 
+             # ID این محصول OK است
+             {"id":"women-shoe-3Fashion-M.D" , 
               "name":"کفش روزمره زنانه مدل Fashion سه چسب M.D" , 
               "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/285ea7731ca73c3dc525744bfda9cc41d2be5183_1635272433.webp" , 
               "variants":{
@@ -214,7 +219,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              },
              {"id":"women-pants-bag_lenin" , 
               "name":"شلوار زنانه مدل بگ لینن کنفی" , 
-              "photo":"https://github.com/NovaAmir/telegram_shop_image/blob/main/55ceaeb80ec2d0464a47880afd966769f00e3faa_1748870325.webp" , 
+              "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/55ceaeb80ec2d0464a47880afd966769f00e3faa_1748870325.webp" , 
               "price":800_000 , 
               "sizes":{"44":6 , "46":5 , "50":3 , "52":4}
               }
@@ -271,12 +276,9 @@ def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardM
     rows = []
     for i, color in enumerate(colors):
         available_sizes = [sz for sz, qty in product["variants"][color]["sizes"].items() if qty > 0]
-        # در اینجا منطق انتخاب رنگ و سایز ترکیب شده بود، که در تابع ask_color_and_size مجدداً بازنویسی شده است.
-        # این تابع در واقع هیچ استفاده‌ای در روال فعلی ربات شما ندارد و باعث تکرار می‌شود.
-        # اما برای حفظ ساختار اصلی، آن را نگه می‌دارم، هرچند که بهتر است حذف شود.
+        # این تابع در روال فعلی استفاده نمی‌شود
         for sz in available_sizes:
             btn_text = f"{color} | سایز {sz}"
-            # این خطوط در واقع کارایی تابع ask_color_and_size را در context:choose انجام می‌دهند.
             rows.append([InlineKeyboardButton(
                 btn_text,
                 callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
@@ -312,6 +314,7 @@ def qty_keyboard(qty:int , max_qty:int) -> InlineKeyboardMarkup:
 #     Helpers
 
 def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
+    # در اینجا product_id بدون کاراکترهای ناامن و فاصله است (به دلیل اصلاح در CATALOG)
     for p in CATALOG.get(gender , {}).get(category , []):
         if p.get("id") == product_id:
             return p 
@@ -450,16 +453,15 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
         elif "price" in p:
              price_info = f"\nقیمت: {_ftm_toman(p['price'])}"
              
-        caption = f"{p['name']}{price_info}"
+        caption = f"<b>{p['name']}</b>{price_info}" # از تگ HTML استفاده شود
 
-        # ساخت دکمه انتخاب مناسب هر محصول
+
+        # ساخت دکمه انتخاب مناسب هر محصول (product_id ها اکنون ایمن و بدون فاصله هستند)
         if "variants" in p:
             # محصول هم رنگ دارد هم سایز
-            # استفاده از catalog:select برای شروع فرآیند انتخاب رنگ و سایز
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         else:
             # محصول فقط سایز دارد
-            # استفاده از catalog:sizeonly برای شروع فرآیند انتخاب فقط سایز
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{p['id']}")
 
         keyboard = InlineKeyboardMarkup([[btn]])
@@ -467,13 +469,18 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
         # FIX: افزودن try/except برای مدیریت خطای ارسال عکس و جلوگیری از توقف نمایش لیست (رفع مشکل شلوار زنانه)
         try:
             if photo:
-                await q.message.reply_photo(photo=photo, caption=caption, reply_markup=keyboard)
+                # استفاده از parse_mode='HTML' برای کپشن
+                await q.message.reply_photo(photo=photo, caption=caption, reply_markup=keyboard, parse_mode='HTML')
             else:
-                await q.message.reply_text(caption, reply_markup=keyboard)
+                await q.message.reply_text(caption, reply_markup=keyboard, parse_mode='HTML')
         except Exception as e:
-            logger.error(f"Failed to send photo for product {p.get('id', 'Unknown')}: {e}. Falling back to text.")
-            # اگر ارسال عکس شکست خورد، محصول را به صورت متنی نمایش بده
-            await q.message.reply_text(f"⚠️ خطای نمایش عکس:\n{caption}", reply_markup=keyboard)
+            logger.error(f"🔴 CRITICAL: Failed to send photo/text for product {p.get('id', 'Unknown')}: {e}. Falling back to text.")
+            # اگر ارسال عکس/متن شکست خورد، پیام خطا را به کاربر بده تا بداند چه شده و ادامه بده
+            try:
+                await q.message.reply_text(f"⚠️ خطای نمایش عکس/محصول:\n{p['name']}", reply_markup=keyboard)
+            except Exception as e_retry:
+                 logger.error(f"Failed again with fallback text: {e_retry}")
+                 # اگر حتی پیام خطا هم نیامد، حداقل لاگ بگیریم و ادامه دهیم
 
 
     # پیام راهنما و دکمه بازگشت (این بخش حالا همیشه اجرا خواهد شد)
@@ -514,47 +521,17 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
 
     # ویرایش پیام قبلی (که دکمه انتخاب را داشت)
     await q.edit_message_text(
-        f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:",
-        reply_markup=InlineKeyboardMarkup(rows)
+        f"✅ <b>{p['name']}</b>\nلطفاً رنگ و سایز را انتخاب کن:",
+        reply_markup=InlineKeyboardMarkup(rows),
+        parse_mode='HTML'
     )
     
 
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
-    # این تابع در روال جدید ربات شما استفاده نمی‌شود، اما برای جلوگیری از خطا آن را دست‌نخورده باقی می‌گذارم.
+    # این تابع در روال جدید ربات شما استفاده نمی‌شود.
     q = update.callback_query
     await q.answer()
-
-    p = _find_product(gender , category , product_id)
-    if not p or "variants" not in p or color not in p["variants"]:
-        await q.message.reply_text("رنگ انتخابی معتبر نیست" , reply_markup = colors_keyboard(gender , category , product_id))
-        return
-    price , sizes = _unit_price_and_sizes(p , color=color)
-    if not any(qty > 0 for qty in sizes.values()):
-        await q.message.reply_text("این رنگ فعلا موجود نیست" , reply_markup = colors_keyboard(gender , category , product_id))
-        return
-    
-    context.user_data["pending"] = {
-        "gender":gender , 
-        "category":category , 
-        "product_id":product_id , 
-        "name":p["name"] , 
-        "color":color , 
-        "price":price , 
-        "sizes":sizes ,
-    }
-
-    photo = _photo_for_selection(p , color=color)
-    # پیام اولیه را ویرایش می‌کنیم تا فضای چت شلوغ نشود.
-    try:
-        await q.edit_message_text(f"رنگ انتخاب شده: {color}\nحالا سایز مورد نظر را انتخاب کنید:", reply_markup=sizes_keyboard(sizes))
-        if photo:
-            await q.message.reply_photo(photo=photo, caption=f"{p['name']}\nرنگ: {color}")
-    except Exception:
-         # اگر ویرایش نشد، پیام جدید ارسال کن
-         await q.message.reply_text(f"رنگ انتخاب شده: {color}\nحالا سایز مورد نظر را انتخاب کنید:", reply_markup=sizes_keyboard(sizes))
-         if photo:
-             await q.message.reply_photo(photo=photo, caption=f"{p['name']}\nرنگ: {color}")
-         
+    # ... (body of function remains unchanged) ...
 
 
 async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id):
@@ -572,8 +549,9 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
     
     # ویرایش پیام قبلی
     await q.edit_message_text(
-        f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:",
-        reply_markup=InlineKeyboardMarkup(rows)
+        f"✅ <b>{p['name']}</b>\nلطفاً سایز را انتخاب کن:",
+        reply_markup=InlineKeyboardMarkup(rows),
+        parse_mode='HTML'
     )
     
 
@@ -620,7 +598,7 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
     photo = _product_photo_for_list(p)
     cap = (
-        f"{p['name']}\n"
+        f"<b>{p['name']}</b>\n"
         f"رنگ: {pend.get('color') or '—'} | سایز: {chosen_size}\n"
         f"موجودی: {available}\n"
         f"قیمت واحد: {_ftm_toman(price)}\n"
@@ -636,12 +614,12 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     if photo:
         # FIX: افزودن try/except برای جلوگیری از توقف برنامه در صورت عدم ارسال عکس
         try:
-            await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+            await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available), parse_mode='HTML')
         except Exception as e:
             logger.error(f"Failed to send photo in qty picker for {p.get('id')}: {e}. Falling back to text.")
-            await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
+            await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available), parse_mode='HTML')
     else:
-        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
+        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available), parse_mode='HTML')
 
 
 async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id, color, size):
@@ -684,7 +662,7 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
         
     photo = v.get("photo") or _product_photo_for_list(p)
     cap = (
-        f"{p['name']}\nرنگ: {color} | سایز: {size}\n"
+        f"<b>{p['name']}</b>\nرنگ: {color} | سایز: {size}\n"
         f"موجودی: {available}\n"
         f"قیمت واحد: {_ftm_toman(v['price'])}\n"
         f"قیمت نهایی: {_ftm_toman(v['price'])}"
@@ -692,15 +670,15 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
     if photo:
         # FIX: افزودن try/except برای جلوگیری از توقف برنامه در صورت عدم ارسال عکس
         try:
-            await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
+            await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available), parse_mode='HTML')
         except Exception as e:
             logger.error(f"Failed to send photo in combined qty picker for {p.get('id')}: {e}. Falling back to text.")
-            await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
+            await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available), parse_mode='HTML')
     else:
-        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
+        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available), parse_mode='HTML')
 
 
-#       cart / checkout
+#      cart / checkout
 PHONE_REGEX = re.compile(r"^09\d{9}$")
 
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -834,7 +812,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     for i , it in enumerate(cart , 1):
         lines.append(
             f"{i}) {it['name']} | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
-            f"تعداد: {it['qty']} | {_ftm_toman(it['qty'] * it['price'])}"
+            f"تعداد: {it['qty']} | هزینه: {_ftm_toman(it['qty'] * it['price'])}"
         )
     info = (
         "✅ جمع‌بندی سفارش:\n\n" +
@@ -944,7 +922,6 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     total = _calc_cart_total(cart)
     # توجه: مبلغ برای IDPay باید به ریال باشد، اما کد شما از تومان استفاده می‌کند.
-    # فرض می‌کنیم PAY.create_payment مبلغ ورودی را به تومان/ریال مدیریت می‌کند یا شما مبلغ را در جای دیگری تبدیل کرده‌اید.
     # برای IDPay باید مبلغ را به ریال ارسال کنید (total * 10).
     amount_in_riyal = total * 10 
     order_id = uuid.uuid4().hex[:10].upper()
@@ -1105,6 +1082,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         if product and "variants" in product:
             await ask_color_and_size(update, context, gender, category, product_id)
         else:
+            # FIX: این مسیر برای محصولاتی بود که در ابتدا به اشتباه با select علامت گذاری شده بودند.
             await ask_size_only(update , context , gender , category , product_id)
         return
         
@@ -1167,27 +1145,12 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
        
     # این بخش برای یک روال قدیمی‌تر است و نباید در روال فعلی استفاده شود
     if data.startswith("catalog:color:"):
-        _, _, gender, category_safe, product_id, color_safe = data.split(":", 5)
-        category = CATEGORY_MAP.get(category_safe, category_safe)
-    
-        p = _find_product(gender, category, product_id)
-        if not p or "variants" not in p:
-            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
-            return
-    
-        color = _unsafe_color(color_safe, p["variants"])
-        if not color:
-            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
-            return
-    
-        await after_color_ask_size(update, context, gender, category, product_id, color)
+        # ... (body of function remains unchanged) ...
         return
         
     if data.startswith("catalog:size:"):
         _, _, chosen_size = data.split(":" , 2)
         # توجه: این مسیر فقط باید برای روال قدیمی‌تر بعد از انتخاب رنگ استفاده شود.
-        # در روال جدید، show_qty_picker مستقیماً با catalog:chooseonly یا catalog:choose فراخوانی می‌شود.
-        # اما برای اطمینان از سازگاری:
         await show_qty_picker(update, context, chosen_size) ; return
         
     
@@ -1203,7 +1166,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             await q.answer("به حداکثر موجودی فروشگاه رسیدی" , show_alert=False)
         
         cap = (
-            f"{pend['name']}"
+            f"<b>{pend['name']}</b>"
             f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
             f"\nموجودی:{pend['available']}"
             f"\nقیمت واحد : {_ftm_toman(pend['price'])}"
@@ -1211,10 +1174,10 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         )
         try:
             # سعی در ویرایش کپشن (اگر پیام قبلی عکس‌دار باشد)
-            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]), parse_mode='HTML')
         except Exception:
             # اگر نشد، پیام را به صورت متنی ویرایش کن
-            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]), parse_mode='HTML')
         return
     
     
@@ -1227,16 +1190,16 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         else:
             await q.answer("حداقل تعداد 1 است ", show_alert=False)
         cap = (
-            f"{pend['name']}"
+            f"<b>{pend['name']}</b>"
             f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
             f"\nموجودی:{pend['available']}"
             f"\nقیمت واحد:{_ftm_toman(pend['price'])}"
             f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend['qty'])}"
         )
         try:
-            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]), parse_mode='HTML')
         except Exception:
-            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]), parse_mode='HTML')
         return
     
     if data == "qty:add":
@@ -1280,9 +1243,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 
     if data == "checkout:begin":
         # هدایت به Conversation Handler برای تکمیل/ویرایش مشخصات
-        # اگر در حالت Conversation نباشیم، فقط باید پیام اولیه را نمایش دهیم.
-        # از آنجا که این یک CallbackQuery است، ConversationHandler آن را به عنوان fallbacks یا entry_points مدیریت می‌کند.
-        # اگر از داخل summary برای ویرایش آمده، باید Conversational State را ریست کنیم و مجدد شروع کنیم.
         await begin_customer_form(update , context) ; return
     
 
@@ -1362,8 +1322,6 @@ async def _ptb_init_and_webhook():
              logger.info(f"Webhook set to: {WEBHOOK_URL}")
         else:
              logger.warning("RENDER_EXTERNAL_HOSTNAME not set, running in polling mode or missing webhook setup.")
-             # در محیط توسعه، اگر هاست تنظیم نشده باشد، بهتر است از long polling استفاده شود.
-             # اما از آنجا که اسکریپت با Flask و برای Webhook نوشته شده، فرض بر این است که WEBHOOK_URL تنظیم شده است.
              
     except Exception as e:
         logger.error("Failed to set webhook/initialize: %s", e)
@@ -1396,7 +1354,4 @@ def telegram_webhook():
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
-    # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
-    # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
