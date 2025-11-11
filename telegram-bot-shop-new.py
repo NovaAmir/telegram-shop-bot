@@ -121,7 +121,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
                  }
                 }    
             },
-            {"id":"men-shoe-Air-Force-1-WH-1990" , # ID اصلاح شده
+            {"id":"men-shoe-Air-Force-1-WH-1990" , # ID اصلاح شد
              "name":"کفش پیاده روی مردانه مدل Air Force 1 WH 1990" ,
              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/5665c3110aee39673eb5818ad1e5460c85a5e4e8_1657457249.webp" , 
              "variants":{
@@ -140,13 +140,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              }
         ],
         "پیراهن" : [
-            {"id":"men-shirt-model-MDSS-CG3719" , # ID اصلاح شده
+            {"id":"men-shirt-model-MDSS-CG3719" , # ID اصلاح شد
              "name":"پیراهن آستین بلند مردانه مدل MDSS-CG3719" , 
              "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/9a7c3ddeb6558e2d798678b89df60d6f801be3fd_1723288662.webp" ,
              "price" : 3_000_000 ,
              "sizes":{"L":4 , "XL":5 , "XXL":3}
              },
-             {"id":"men-shirt-model-SB-SS-4513" , # ID اصلاح شده
+             {"id":"men-shirt-model-SB-SS-4513" , # ID اصلاح شد
               "name":"پیراهن آستین بلند مردانه مدل SB-SS-4513" , 
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/2e31b5f7959ecb020cd95af79c22bb97a96d7c46_1703611532.webp" , 
               "price": 2_500_000 ,
@@ -154,13 +154,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
               }
         ],
         "تی شرت" : [
-            {"id":"men-Tshirt-model-TS63-B" , # ID اصلاح شده
+            {"id":"men-Tshirt-model-TS63-B" , # ID اصلاح شد
              "name":"تی شرت اورسایز مردانه نوزده نودیک مدل TS63 B" , 
              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/6d5e77c9b3f25d11050c9e714675678b38314efa_1755035663.webp" , 
              "price" : 900_000 ,
              "sizes":{"L":3 , "XL":4 , "XXL":4}
              },
-             {"id":"men-Tshirt-model-TS1962-B" , # ID اصلاح شده
+             {"id":"men-Tshirt-model-TS1962-B" , # ID اصلاح شد
               "name":"تی شرت ورزشی مردانه نوزده نودیک مدل TS1962 B" ,
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/deaaf226e0ef806723b4972f933cfffc6e5e9a76_1675938042.webp" , 
               "variants":{
@@ -187,7 +187,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              "price": 9_100_000 , 
              "sizes" : {"40":2 , "41":0 , "42":3 , "43":2 , "44":1}
              },
-             {"id":"women-shoe-3Fashion-M-D" , # ID اصلاح شده
+             {"id":"women-shoe-3Fashion-M-D" , # ID اصلاح شد
               "name":"کفش روزمره زنانه مدل Fashion سه چسب M.D" , 
               "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/285ea7731ca73c3dc525744bfda9cc41d2be5183_1635272433.webp" , 
               "variants":{
@@ -206,13 +206,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              }
         ],
         "شلوار":[
-            {"id":"women-pants-mazerati-raste-kerem" , # ID اصلاح شده
+            {"id":"women-pants-mazerati-raste-kerem" , # ID اصلاح شد
              "name":"شلوار زنانه مدل ریتا مازراتی راسته رنگ کرم روشن" ,
              "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/4cda707f7d8e25ccdfdc4fab12d0e43552624376_1722364117.webp" , 
              "price":560_000 , 
              "sizes":{"44":3 , "46":3 , "50":2 , "52":4}
              },
-             {"id":"women-pants-bag-lenin" , # ID اصلاح شده
+             {"id":"women-pants-bag-lenin" , # ID اصلاح شد
               "name":"شلوار زنانه مدل بگ لینن کنفی" , 
               "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/55ceaeb80ec2d0464a47880afd966769f00e3faa_1748870325.webp" , 
               "price":800_000 , 
@@ -262,6 +262,24 @@ def category_keyboard(gender : str) -> InlineKeyboardMarkup:
         InlineKeyboardButton("🏠 منو اصلی" , callback_data="menu:back_home"),
     ])
     return InlineKeyboardMarkup(rows)
+
+
+# این سه تابع تکراری حذف شدند. (قبلا سه بار تعریف شده بود)
+# def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
+#     product = _find_product(gender, category, product_id)
+#     assert product and "variants" in product
+#     colors = list(product["variants"].keys())
+#     rows = []
+#     for i, color in enumerate(colors):
+#         available_sizes = [sz for sz, qty in product["variants"][color]["sizes"].items() if qty > 0]
+#         for sz in available_sizes:
+#             btn_text = f"{color} | سایز {sz}"
+#             rows.append([InlineKeyboardButton(
+#                 btn_text,
+#                 callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
+#             )])
+#     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
+#     return InlineKeyboardMarkup(rows)
 
 
 def sizes_keyboard(sizes:Dict[str , int]) -> InlineKeyboardMarkup:
@@ -514,7 +532,6 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
     # در اینجا از product_id ایمن‌شده در callback_data استفاده می‌کنیم
     safe_product_id = _safe_callback(product_id)
     safe_category = _safe_callback(category)
-    # این تابع صرفاً دکمه‌های سایز را برای محصول بدون variants نمایش می‌دهد.
     rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{safe_category}:{safe_product_id}:{sz}")] for sz in available_sizes]
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{safe_category}")])
     
@@ -545,14 +562,9 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         price = p["price"]
         name = p["name"]
     else: # محصول variant دار
-        # در این سناریو، این تابع برای محصولات variant دار نباید اجرا شود
-        # چون اطلاعات price و available قبلا توسط show_qty_picker_combined ست شده است.
-        # اما برای ایمنی:
-        p = _find_product(pend["gender"], pend["category"], pend["product_id"])
         price = pend["price"]
+        available = pend.get("available")
         name = pend["name"]
-        color = pend["color"]
-        available = p["variants"][color]["sizes"].get(chosen_size, 0)
     
     if available <= 0:
         await q.message.reply_text("این سایز موجود نیست.", reply_markup=main_menu())
@@ -746,7 +758,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     for i , it in enumerate(cart , 1):
         lines.append(
             f"{i}) {it['name']} | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
-            f"تعداد: {it['qty']} | هزینه: {_ftm_toman(it['qty'] * it['price'])}"
+            f"تعداد: {it['qty']} | {_ftm_toman(it['qty'] * it['price'])}"
         )
     info = (
         "✅ جمع‌بندی سفارش:\n\n" +
@@ -1039,7 +1051,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         
     
     if data.startswith("catalog:choose:"):
-        # این بخش از ایندکس رنگ استفاده می‌کند
+        # این بخش از ایندکس رنگ استفاده می‌کند، نه رنگ ایمن‌شده، بنابراین باید به 6 بخش تقسیم شود.
         parts = data.split(":", 6)
         if len(parts) != 7:
             await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
@@ -1067,11 +1079,12 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         return
         
        
-    
+    # این قسمت حذف شد زیرا تابع ask_color_and_size از index استفاده می‌کند
+    # if data.startswith("catalog:color:"):
+    #     ...
+        
     if data.startswith("catalog:size:"):
-        # این برای حالتی است که از دکمه‌های size در یک محصول color+size استفاده می‌شود
         _, _, chosen_size = data.split(":" , 2)
-        # این به show_qty_picker می‌رود که pending را قبلا از ask_color_and_size پر کرده است.
         await show_qty_picker(update, context, chosen_size) ; return
         
     
@@ -1159,7 +1172,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
 
     if data == "checkout:begin":
-        # اجرای begin_customer_form که ConversationHandler را شروع می‌کند
+        # حذف edit_message_text و اجرای begin_customer_form به دلیل اینکه یک مکالمه جدید شروع می‌شود
         await begin_customer_form(update , context) ; return
     
 
@@ -1205,6 +1218,9 @@ application.add_handler(CallbackQueryHandler(menu_router))
 # اضافه کردن ConversationHandler به اپلیکیشن
 application.add_handler(checkout_conv)
 
+# این دو خط باید حذف یا تغییر داده شوند چون در ConversationHandler مدیریت می‌شوند
+# application.add_handler(MessageHandler(filters.CONTACT , on_contact)) 
+# application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND , on_text))
 # اگر می‌خواهید پیام‌های متنی خارج از مکالمه هم به start برگردند:
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
