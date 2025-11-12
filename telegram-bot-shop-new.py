@@ -208,7 +208,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
         "شلوار":[
             {"id":"women-pants-mazerati_raste_kerem" , 
              "name":"شلوار زنانه مدل ریتا مازراتی راسته رنگ کرم روشن" ,
-             "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/4cda707f7d8e25ccdfdc4fab12d0e43552624376_1722364117.webp" , 
+             "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/blob/main/4cda707f7d8e25ccdfdc4fab12d0e43552624376_1722364117.webp" , 
              "price":560_000 , 
              "sizes":{"44":3 , "46":3 , "50":2 , "52":4}
              },
@@ -420,6 +420,8 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
     if not items:
         await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
         return
+        
+    await q.edit_message_text(f"دسته: {category}\nمحصولات موجود:")
 
     for p in items:
         photo = _product_photo_for_list(p)
@@ -1294,4 +1296,5 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
