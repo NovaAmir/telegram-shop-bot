@@ -146,7 +146,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              "price" : 3_000_000 ,
              "sizes":{"L":4 , "XL":5 , "XXL":3}
              },
-             {"id":"men-shirt-model SB-SS-4513" , 
+             {"id":"men-shirt-model-SB-SS-4513" , 
               "name":"پیراهن آستین بلند مردانه مدل SB-SS-4513" , 
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/2e31b5f7959ecb020cd95af79c22bb97a96d7c46_1703611532.webp" , 
               "price": 2_500_000 ,
@@ -319,14 +319,8 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
 
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
-    if p.get("thumbnail"):
-        return p["thumbnail"]
-    if p.get("photo"):
-        return p["photo"]
-    if "variants" in p and p["variants"]:
-        first_color = next(iter(p["variants"].values()))
-        return first_color.get("photo")
-    return None
+    return p.get("thumbnail") or p.get("photo") or (next(iter(p["variants"].values())).get("photo") if "variants" in p and p["variants"] else None)
+
 
 
 def _unit_price_and_sizes(p:Dict , color:Optional[str]) -> Tuple[int , Dict[str,int]]:
@@ -1294,3 +1288,4 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
