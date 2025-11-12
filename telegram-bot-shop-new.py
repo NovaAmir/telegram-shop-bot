@@ -265,9 +265,11 @@ def category_keyboard(gender : str) -> InlineKeyboardMarkup:
         chunk = cats[i:i+2]
         # استفاده از _safe_callback در callback_data
         rows.append([InlineKeyboardButton(c , callback_data=f"catalog:category:{gender}:{_safe_callback(c)}")for c in chunk])
+    
+    # FIX: حذف لیست اضافی برای دکمه 'منو اصلی' که باعث خطای TypeError می‌شد
     rows.append([
         InlineKeyboardButton("⬅️ تغییر جنسیت" , callback_data="menu:products"),
-        [InlineKeyboardButton("🏠 منو اصلی" , callback_data="menu:back_home")],
+        InlineKeyboardButton("🏠 منو اصلی" , callback_data="menu:back_home"),
     ])
     return InlineKeyboardMarkup(rows)
 
