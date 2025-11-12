@@ -33,8 +33,9 @@ def _safe_callback(val):
     val = val.replace(" ", "-").replace("/", "-") 
     # حذف کاراکترهای نامجاز
     val = re.sub(r'[^a-zA-Z0-9\u0600-\u06FF\-_]', '', val)
-    # FIX: افزایش طول کاراکتر برای جلوگیری از قطع شدن ID محصول و نام کتگوری
-    return val[:60]  # حداکثر 60 کاراکتر (امن‌تر از 64 بایت)
+    # 💥 FIX: حذف محدودیت طول (مانند [:60] یا [:40]) برای جلوگیری از قطع شدن ID محصول
+    # تلگرام خودش 64 بایت را هندل می‌کند. این تضمین می‌کند که ID محصول کامل باشد.
+    return val 
 
 def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
     for color in product_variants.keys():
@@ -452,13 +453,15 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         else:
             # محصول فقط سایز دارد (مثل پیراهن و شلوار)
+            # FIX: از p['id'] کامل استفاده شده است.
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{p['id']}")
 
         keyboard = InlineKeyboardMarkup([[btn]])
 
-        # FIX: افزودن try/except برای مدیریت خطای ارسال عکس و جلوگیری از توقف نمایش لیست (رفع مشکل شلوار زنانه)
+        # FIX: افزودن try/except برای مدیریت خطای ارسال عکس و جلوگیری از توقف نمایش لیست (رفع مشکل شلوار زنانه و...)
         try:
             if photo:
+                # استفاده از effective_chat برای ارسال پیام جدید پس از حذف پیام قبلی
                 await update.effective_chat.send_photo(photo=photo, caption=caption, reply_markup=keyboard)
             else:
                 await update.effective_chat.send_message(caption, reply_markup=keyboard)
@@ -483,6 +486,7 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
 
     p = _find_product(gender, category, product_id)
     if not p or "variants" not in p:
+        # اگر محصول پیدا نشد یا Variants نداشت، به مرحله قبل برگرد.
         await q.edit_message_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
 
@@ -586,11 +590,12 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     # قیمت واحد را با توجه به محصول یا وریانت آپدیت می‌کنیم
     pend["price"] = price 
 
-    photo = _product_photo_for_list(p)
+    photo = _photo_for_selection(p, pend.get("color")) # استفاده از تابع جدید برای گرفتن عکس
     cap = (
-        f"{p['name']}\nسایز: {chosen_size}\n"
-        f"موجودی: {available}\n"
-        f"قیمت واحد: {_ftm_toman(price)}\n"
+        f"{p['name']}"
+        f"\nرنگ:{pend.get('color') or '—'} | سایز : {chosen_size}"
+        f"\nموجودی: {available}"
+        f"\nقیمت واحد: {_ftm_toman(price)}\n"
         f"قیمت نهایی: {_ftm_toman(price)}"
     )
     # ویرایش پیام قبلی برای نمایش عکس و تعداد
@@ -814,7 +819,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
 
 #      payment_provider
 class DummyProvider:
-    def create_payment(self , order_id:str , amount: int, name: str, phone: str, desc: str, callback_url: Optional[str] = None):
+    def create_payment( self , order_id:str , amount: int, name: str, phone: str, desc: str, callback_url: Optional[str] = None):
         link = link = f"https://example.com/pay?order_id={order_id}&amount={amount}"
         return {"ok": True, "payment_id": f"dummy-{order_id}", "link": link, "raw": {"provider": "dummy"}}
     
