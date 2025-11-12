@@ -206,13 +206,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
              }
         ],
         "شلوار":[
-            {"id":"women-pants-mazerati_raste_kerem" , 
+            {"id":"women-pants-mazerati-raste-kerem" , 
              "name":"شلوار زنانه مدل ریتا مازراتی راسته رنگ کرم روشن" ,
-             "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/blob/main/4cda707f7d8e25ccdfdc4fab12d0e43552624376_1722364117.webp" , 
+             "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/blob/main/OIP.webp" , 
              "price":560_000 , 
              "sizes":{"44":3 , "46":3 , "50":2 , "52":4}
              },
-             {"id":"women-pants-bag_lenin" , 
+             {"id":"women-pants-bag-lenin" , 
               "name":"شلوار زنانه مدل بگ لینن کنفی" , 
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/55ceaeb80ec2d0464a47880afd966769f00e3faa_1748870325.webp" , 
               "price":800_000 , 
@@ -420,6 +420,16 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
     if not items:
         await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
         return
+    try:
+        await q.edit_message_text(f"👇 محصولات دسته **{category}** 👇", parse_mode='Markdown')
+    except Exception as e:
+        logger.warning(f"Could not edit message text before showing products: {e}")
+        # اگر نتوانست ویرایش کند، حداقل یک پیام جدید ساده بفرستد
+        await q.message.reply_text(f"👇 محصولات دسته **{category}** 👇", parse_mode='Markdown')
+
+    for p in items:
+        caption = f"🏷️ *{p.get('name', 'بدون نام')}*\n💰 قیمت: *{p.get('price', 'نامشخص')}* تومان"
+        photo = p.get('photo')
         
     await q.edit_message_text(f"دسته: {category}\nمحصولات موجود:")
 
@@ -1296,5 +1306,6 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
