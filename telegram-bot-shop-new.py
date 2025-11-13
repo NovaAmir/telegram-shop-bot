@@ -212,7 +212,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
               "price":800_000 , 
               "sizes":{"44":6 , "46":5 , "50":3 , "52":4}
               } , 
-            {"id":"women-pants-mazerati-raste-kerem" , 
+            {"id":"women-pants-rita-m-kerm" , # شناسه کوتاه شده برای جلوگیری از Button_data_invalid
              "name":"شلوار زنانه مدل ریتا مازراتی راسته رنگ کرم روشن" ,
              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/main/20251112222400589692652.jpg" , 
              "price":560_000 , 
@@ -1319,6 +1319,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
