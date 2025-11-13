@@ -1,7 +1,4 @@
 from telegram import (Update , InlineKeyboardButton , InlineKeyboardMarkup , ReplyKeyboardMarkup , ReplyKeyboardRemove)
-keyboard = [[InlineKeyboardButton("مشاهده محصول" , callback_data=f"prod_{product_id}")]]
-reply_markup = InlineKeyboardMarkup(keyboard)
-bot.send_photo(chat_id=chat_id , photo=photo_url , caption=caption , reply_markup=reply_markup)
 from telegram.ext import (ApplicationBuilder , CommandHandler , ContextTypes , CallbackQueryHandler , Application , MessageHandler , filters , ConversationHandler)
 import logging
 import os
@@ -1322,6 +1319,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
