@@ -319,13 +319,16 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
 
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
+    if not isinstance(p , dict):
+        return None
     if p.get("thumbnail"):
         return p["thumbnail"]
     if p.get("photo"):
         return p["photo"]
     if "variants" in p and p["variants"]:
         first_color = next(iter(p["variants"].values()))
-        return first_color.get("photo")
+        if isinstance(first_color , dict):
+            return first_color.get("photo")
     return None
 
 
@@ -416,56 +419,66 @@ async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , ge
 async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str) -> None:
     q = update.callback_query
     await q.answer()
+
     items = CATALOG.get(gender, {}).get(category, [])
     if not items:
-        await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
+        # اگر محصولی نیست، کاربر را به صفحه دسته‌ها برگردان
+        try:
+            await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
         return
+
+    # سعی می‌کنیم پیام اولیه را ویرایش کنیم؛ در صورت شکست، پیام جدید می‌فرستیم
+    title = f"👇 محصولات دسته «{category}» 👇"
     try:
-        await q.edit_message_text(f"👇 محصولات دسته **{category}** 👇", parse_mode='Markdown')
+        await q.edit_message_text(title)
     except Exception as e:
-        logger.warning(f"Could not edit message text before showing products: {e}")
-        # اگر نتوانست ویرایش کند، حداقل یک پیام جدید ساده بفرستد
-        await q.message.reply_text(f"👇 محصولات دسته **{category}** 👇", parse_mode='Markdown')
+        logger.debug("Could not edit message for product list header: %s", e)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=title)
 
-    for p in items:
-        caption = f"🏷️ *{p.get('name', 'بدون نام')}*\n💰 قیمت: *{p.get('price', 'نامشخص')}* تومان"
-        photo = p.get('photo')
-        
-    await q.edit_message_text(f"دسته: {category}\nمحصولات موجود:")
-
+    # ارسال هر محصول جداگانه — مقاوم در برابر خطا و با کمی تأخیر برای جلوگیری از flood
     for p in items:
         photo = _product_photo_for_list(p)
-        caption = f"{p['name']}"
-
-        # ساخت دکمه انتخاب مناسب هر محصول
+        caption = f"{p.get('name', 'بدون نام')}"
+        # دکمه مناسب بسته به این که وریانت دارد یا نه
         if "variants" in p:
-            # محصول هم رنگ دارد هم سایز
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:select:{gender}:{_safe_callback(category)}:{p['id']}")
         else:
-            # محصول فقط سایز دارد
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{p['id']}")
-
         keyboard = InlineKeyboardMarkup([[btn]])
 
-        # FIX: افزودن try/except برای مدیریت خطای ارسال عکس و جلوگیری از توقف نمایش لیست (رفع مشکل شلوار زنانه)
+        # ارسال مقاوم: اول تلاش برای ارسال عکس (اگر موجود)، در صورت خطا یا نبود عکس -> ارسال متن
         try:
             if photo:
-                await q.message.reply_photo(photo=photo, caption=caption, reply_markup=keyboard)
+                # از context.bot.send_photo استفاده کنیم چون معمولاً پایدارتر است
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=photo, caption=caption, reply_markup=keyboard)
             else:
-                await q.message.reply_text(caption, reply_markup=keyboard)
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=caption, reply_markup=keyboard)
         except Exception as e:
-            logger.error(f"Failed to send photo for product {p.get('id', 'Unknown')}: {e}")
-            await q.message.reply_text(f"⚠️ خطای نمایش عکس {p['name']}", reply_markup=keyboard)
+            logger.warning("Failed to send product %s (id=%s): %s. Falling back to text.", p.get("name"), p.get("id"), e)
+            try:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"{caption}\n(⚠️ تصویر قابل نمایش نیست)", reply_markup=keyboard)
+            except Exception as e2:
+                logger.error("Fallback send_message also failed for product %s: %s", p.get("id"), e2)
+        # کمی صبر کن تا telegram مانع نشه (معمولاً مشکل race/flood حل میشه)
+        try:
+            await asyncio.sleep(0.08)
+        except Exception:
+            pass
 
-
-    # پیام راهنما و دکمه بازگشت
-    await q.message.reply_text(
-        f"دسته: {category}\nبرای انتخاب هر محصول روی دکمه زیر عکس آن کلیک کن.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}")],
-            [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
-        ])
-    )
+    # پیام راهنما و دکمه بازگشت (در انتها)
+    try:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"دسته: {category}\nبرای انتخاب هر محصول روی دکمهٔ زیر عکس آن کلیک کن.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ انتخاب دسته دیگر", callback_data=f"catalog:gender:{gender}")],
+                [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
+            ])
+        )
+    except Exception as e:
+        logger.debug("Failed to send category footer: %s", e)
     
 async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str, product_id:str) -> None:
     q = update.callback_query
@@ -1306,6 +1319,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
