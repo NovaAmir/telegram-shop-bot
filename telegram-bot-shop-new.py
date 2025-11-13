@@ -668,7 +668,7 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
 
 
 #       cart / checkout
-PHONE_REGEX = re.compile(r"^09 or +98\d{9}$")
+PHONE_REGEX = re.compile r"^(09\d{9}|\+98\d{9})$"
 
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -699,7 +699,7 @@ async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE
     await q.answer()
     if context.user_data.get("cart"):
         await q.edit_message_text(
-            "نام و نام خانوادگی را وارد کن:",
+            "نام و نام خانوادگی را وارد کنید:",
             reply_markup = InlineKeyboardMarkup.from_button(
                 InlineKeyboardButton("انصراف" , callback_data="flow:cancel")
             ),
@@ -735,7 +735,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if PHONE_REGEX.match(text):
             context.user_data["customer"]["phone"] = text
             context.user_data["awaiting"] = "address"
-            await update.message.reply_text("آدرس پستی کامل:", reply_markup=ReplyKeyboardRemove())
+            await update.message.reply_text("آدرس :", reply_markup=ReplyKeyboardRemove())
             return CUSTOMER_ADDRESS
         else:
             await update.message.reply_text("شماره نامعتبر است. با قالب 09xxxxxxxxx وارد کن.")
@@ -743,7 +743,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if awaiting == "address":
         context.user_data["customer"]["address"] = text
         context.user_data["awaiting"] = "postal"
-        await update.message.reply_text("کد پستی ۱۰ رقمی:")
+        await update.message.reply_text("کد پستی(10رقمی):")
         return CUSTOMER_POSTAL
     if awaiting == "postal":
         if re.fullmatch(r"\d{10}" , text):
@@ -767,7 +767,7 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if PHONE_REGEX.match(phone):
         context.user_data["customer"]["phone"] = phone
         context.user_data["awaiting"] = "address"
-        await update.message.reply_text("آدرس پستی کامل:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("آدرس :", reply_markup=ReplyKeyboardRemove())
         return CUSTOMER_ADDRESS
     else:
         await update.message.reply_text("شمارهٔ دریافتی نامعتبر بود. لطفاً دستی وارد کن.")
@@ -1352,6 +1352,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
