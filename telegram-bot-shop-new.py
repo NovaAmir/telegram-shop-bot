@@ -140,13 +140,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
         ],
         "پیراهن" : [
             # FIX: شناسه محصول حاوی فاصله برای MDSS-CG3719
-            {"id":"men-shirt-model-MDSS-CG3719" , 
+            {"id":"men-shirt-MDSS-CG3719" , 
              "name":"پیراهن آستین بلند مردانه مدل MDSS-CG3719" , 
              "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/9a7c3ddeb6558e2d798678b89df60d6f801be3fd_1723288662.webp" ,
              "price" : 3_000_000 ,
              "sizes":{"L":4 , "XL":5 , "XXL":3}
              },
-             {"id":"men-shirt-model SB-SS-4513" , 
+             {"id":"men-shirt-SB-SS-4513" , 
               "name":"پیراهن آستین بلند مردانه مدل SB-SS-4513" , 
               "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/2e31b5f7959ecb020cd95af79c22bb97a96d7c46_1703611532.webp" , 
               "price": 2_500_000 ,
@@ -1319,6 +1319,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
