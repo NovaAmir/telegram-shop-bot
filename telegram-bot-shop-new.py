@@ -1210,9 +1210,42 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
 
     if data == "flow:cancel":
-        context.user_data.pop("pending" , None)
-        context.user_data['awaiting'] = None
-        await q.edit_message_text("لغو شد.", reply_markup=main_menu())
+        q = update.callback_query
+        # 1. پاسخ به کاربر و پاک کردن داده‌های موقت (pending)
+        # با pop، داده‌ها را خارج و همزمان متغیر را پاک می‌کنیم
+        pend = context.user_data.pop("pending", None) 
+        await q.answer("❌ عملیات افزودن به سبد خرید لغو شد.")
+        
+        # 2. حذف دکمه‌ها از پیام فعلی (پیام انتخاب تعداد/افزودن به سبد خرید)
+        try:
+            await q.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            # اگر پیام قابلیت ویرایش نداشت، خطا را نادیده می‌گیریم
+            pass 
+        
+        # 3. نمایش مجدد مرحله قبل (انتخاب رنگ و سایز)
+        if pend:
+            gender = pend.get("gender")
+            category_safe = pend.get("category")
+            product_id = pend.get("product_id")
+            
+            # در صورتی که اطلاعات اصلی ناقص باشد، از ادامه صرف نظر می‌کنیم
+            if not all([gender, category_safe, product_id]):
+                return
+            
+            category = CATEGORY_MAP.get(category_safe , category_safe)
+            product = _find_product(gender, category, product_id)
+            
+            if product:
+                # اگر محصول دارای Variants (رنگ و سایز) است، به مرحله انتخاب برگردد
+                if "variants" in product:
+                    # فراخوانی ask_color_and_size که پیام جدیدی را برای انتخاب رنگ/سایز ارسال می‌کند
+                    await ask_color_and_size(update, context, gender, category, product_id) 
+                # اگر فقط سایز دارد (محصولات ساده)
+                elif "sizes" in product:
+                    # فراخوانی ask_size_only که پیام جدیدی را برای انتخاب سایز ارسال می‌کند
+                    await ask_size_only(update , context , gender , category_safe , product_id)
+        
         return
     
 
@@ -1319,6 +1352,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
