@@ -668,7 +668,7 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
 
 
 #       cart / checkout
-PHONE_REGEX = re.compile r"^(09\d{9}|\+989\d{9})$"
+PHONE_REGEX = re.compile r"^(09\d{9})$"
 
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -1352,6 +1352,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
