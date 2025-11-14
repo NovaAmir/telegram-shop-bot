@@ -815,23 +815,32 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
             f"{i}) {it['name']} | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
             f"تعداد: {it['qty']} | {_ftm_toman(it['qty'] * it['price'])}"
         )
+    
+    # 🟢 تغییر: نمایش خلاصه سفارش و اطلاعات مشتری با فرمت Markdown
     info = (
-        "✅ جمع‌بندی سفارش:\n\n" +
-        "\n".join(lines) +
-        f"\n\nجمع کل: {_ftm_toman(total)}" +
-        "\n\n👤 اطلاعات گیرنده:\n"
-        f"نام: {customer.get('name', '—')}\n"
-        f"موبایل: {customer.get('phone', '—')}\n"
-        f"آدرس: {customer.get('address', '—')}\n"
-        f"کد پستی: {customer.get('postal', '—')}\n"
+        "🧾 **خلاصه سفارش و مشخصات مشتری**:\n\n"
+        "👤 **نام و نام خانوادگی**: `{name}`\n"
+        "📞 **شماره موبایل**: `{phone}`\n"
+        "🏠 **آدرس پستی**: `{address}`\n"
+        "📮 **کد پستی**: `{postal}`\n\n"
+        "🛍️ **محصولات سفارش داده شده**:\n"
+        f"{'\n'.join(lines)}\n\n"
+        f"💰 **مجموع قابل پرداخت**: **{_ftm_toman(total)}**"
+    ).format(
+        name=customer.get('name', '—'),
+        phone=customer.get('phone', '—'),
+        address=customer.get('address', '—'),
+        postal=customer.get('postal', '—')
     )
+    
+    # 🟢 تغییر: متن دکمه پرداخت به حالت Placeholder
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
-        [InlineKeyboardButton("💳 پرداخت آنلاین", callback_data="checkout:pay")],
+        [InlineKeyboardButton("💳 اقدام به پرداخت نهایی (فعلا غیرفعال)", callback_data="checkout:pay")], # تغییر متن دکمه
         [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
     ])
-    await send(chat_id=chat_id, text=info, reply_markup=kb)
+    await send(chat_id=chat_id, text=info, reply_markup=kb, parse_mode="Markdown")
 
 
 #      payment_provider
@@ -1218,6 +1227,20 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         _merge_cart_item(cart , item)
         context.user_data.pop("pending" , None)
 
+        # 🟢 تغییر: افزودن پیام هشدار (درخواستی کاربر)
+        warning_message = (
+            "✅ مشتری گرامی، **کالا مورد نظر به سبد خرید شما اضافه شده**.\n\n"
+            "⚠️ **.لطفاً توجه داشته باشید** که تا پرداخت نهایی، کالا متعلق به شما نمی‌باشد\n\n  "
+            "با تشکر، مدیریت فروشگاه ..."
+        )
+        
+        await context.bot.send_message(
+            chat_id=q.message.chat_id,
+            text=warning_message,
+            parse_mode="Markdown"
+        )
+        # ----------------------------------------------------
+
         txt = "✅ به سبد خرید اضافه شد.\nمی‌تونی ادامه بدی یا سبد خرید رو ببینی:"
         await q.message.reply_text(
             txt,
@@ -1342,22 +1365,3 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
