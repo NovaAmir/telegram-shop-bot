@@ -358,6 +358,12 @@ def _calc_cart_total(cart:List[dict]) -> int:
     return sum(it["qty"] * it["price"] for it in cart)
 
 
+# تابع کمکی برای تبدیل ارقام فارسی به انگلیسی
+def _to_english_digits(text: str) -> str:
+    mapping = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
+    return text.translate(mapping)
+
+
 def _merge_cart_item(cart:List[dict] , new_item : dict):
     for it in cart:
         if(
@@ -668,7 +674,7 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
 
 
 #       cart / checkout
-PHONE_REGEX = re.compile(r"^09\d{9}$")
+PHONE_REGEX = re.compile(r"^(\+98|0)?9\d{9}$") # اجازه می‌دهد که با +98 یا 0 یا بدون هیچکدام شروع شود.
 
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -729,16 +735,26 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [[{"text": "📱 ارسال شماره من", "request_contact": True}]],
             resize_keyboard=True, one_time_keyboard=True
         )
-        await update.message.reply_text("شماره موبایل را وارد کن (یا دکمهٔ زیر):", reply_markup=kb)
+        await update.message.reply_text("شماره تماس خود را وارد کنید:", reply_markup=kb)
         return CUSTOMER_PHONE
     if awaiting == "phone":
-        if PHONE_REGEX.match(text):
-            context.user_data["customer"]["phone"] = text
+        # 🟢 اصلاحات برای پذیرش ارقام فارسی و فرمت‌های +98/0
+        phone = _to_english_digits(text) # تبدیل ارقام فارسی به انگلیسی
+        phone = phone.replace(" ", "") # حذف فاصله‌ها
+        
+        if PHONE_REGEX.match(phone):
+            # نرمال‌سازی شماره به فرمت استاندارد 09xxxxxxxxx برای ذخیره‌سازی
+            if phone.startswith("+98"):
+                phone = "0" + phone[3:] # حذف +98 و جایگزینی با 0
+            elif not phone.startswith("0"):
+                phone = "0" + phone # اضافه کردن 0 اگر با 9 شروع شده باشد
+            
+            context.user_data["customer"]["phone"] = phone
             context.user_data["awaiting"] = "address"
-            await update.message.reply_text("آدرس پستی کامل:", reply_markup=ReplyKeyboardRemove())
+            await update.message.reply_text("آدرس:", reply_markup=ReplyKeyboardRemove())
             return CUSTOMER_ADDRESS
         else:
-            await update.message.reply_text("شماره نامعتبر است. با قالب 09xxxxxxxxx وارد کن.")
+            await update.message.reply_text("شماره نامعتبر است. با قالب 09xxxxxxxxx (فارسی یا انگلیسی) وارد کن.")
         return CUSTOMER_PHONE
     if awaiting == "address":
         context.user_data["customer"]["address"] = text
@@ -746,13 +762,13 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("کد پستی ۱۰ رقمی:")
         return CUSTOMER_POSTAL
     if awaiting == "postal":
-        if re.fullmatch(r"\d{10}" , text):
-            context.user_data["customer"]["postal"] = text
+        if re.fullmatch(r"\d{10}" , _to_english_digits(text)): # اعمال تبدیل برای کدپستی هم توصیه می‌شود
+            context.user_data["customer"]["postal"] = _to_english_digits(text)
             context.user_data["awaiting"] = None
             await show_checkout_summary(update.message, context)
             return ConversationHandler.END
         else:
-            await update.message.reply_text("کد پستی نامعتبر است. ۱۰ رقم وارد کن.")
+            await update.message.reply_text("کد پستی نامعتبر است. ۱۰ رقم (فارسی یا انگلیسی) وارد کنید.")
         return CUSTOMER_POSTAL
 
 
@@ -762,12 +778,19 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     awaiting = context.user_data.get("awaiting")
     if awaiting != "phone":
         return
+        
     phone = update.message.contact.phone_number
-    phone = phone.replace("+98", "0").replace(" ", "")
+    # 🟢 اصلاحات برای نرمال‌سازی شماره ارسالی از تلگرام
+    phone = phone.replace("+98", "0").replace("98", "0").replace(" ", "")
+
     if PHONE_REGEX.match(phone):
+        # اطمینان از اینکه شماره به 0 شروع شود (فرمت ذخیره‌سازی):
+        if not phone.startswith("0"):
+             phone = "0" + phone
+             
         context.user_data["customer"]["phone"] = phone
         context.user_data["awaiting"] = "address"
-        await update.message.reply_text("آدرس پستی کامل:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("آدرس:", reply_markup=ReplyKeyboardRemove())
         return CUSTOMER_ADDRESS
     else:
         await update.message.reply_text("شمارهٔ دریافتی نامعتبر بود. لطفاً دستی وارد کن.")
@@ -1319,6 +1342,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
