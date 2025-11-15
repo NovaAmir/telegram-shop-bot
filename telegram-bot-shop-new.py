@@ -821,11 +821,11 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         "🧾 **خلاصه سفارش و مشخصات مشتری**:\n\n"
         "👤 **نام و نام خانوادگی**: `{name}`\n"
         "📞 **شماره موبایل**: `{phone}`\n"
-        "🏠 **آدرس پستی**: `{address}`\n"
+        "🏠 **آدرس**: `{address}`\n"
         "📮 **کد پستی**: `{postal}`\n\n"
         "🛍️ **محصولات سفارش داده شده**:\n"
         f"{'\n'.join(lines)}\n\n"
-        f"💰 **مجموع قابل پرداخت**: **{_ftm_toman(total)}**"
+        f"💰 **مبلغ قابل پرداخت**: **{_ftm_toman(total)}**"
     ).format(
         name=customer.get('name', '—'),
         phone=customer.get('phone', '—'),
@@ -915,56 +915,13 @@ CALLBACK_URL = os.getenv("CALLBACK_URL", "").strip() or None
 #      check out: pay/verify
 async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
-    cart = context.user_data.get("cart" , [])
-    customer = context.user_data.get("customer", {})
-    if not cart:
-        await q.edit_message_text("سبد خرید خالی است.", reply_markup=main_menu())
-        return
-    missing = [k for k in ("name", "phone", "address", "postal") if not customer.get(k)]
-    if missing:
-        await q.edit_message_text("ابتدا مشخصات  را کامل کنید.", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🧾 تکمیل مشخصات", callback_data="checkout:begin")],
-            [InlineKeyboardButton("🏠 منو", callback_data="menu:back_home")]
-        ]))
-        return
-    total = _calc_cart_total(cart)
-    order_id = uuid.uuid4().hex[:10].upper()
-    desc = f"سفارش تلگرام #{order_id} - {customer.get('name')}"
-    
-    res = PAY.create_payment(order_id, total, customer["name"], customer["phone"], desc, CALLBACK_URL)
-    if not res.get("ok"):
-        await q.edit_message_text("خطا در ایجاد پرداخت. لطفاً بعداً تلاش کن.", reply_markup=main_menu())
-        logger.error("Payment create error: %s", res)
-        return
-    
-    payment_id = res["payment_id"]
-    pay_link = res["link"]
+    await q.answer("فعلاً درگاه پرداخت غیرفعال است. لطفاً بعداً تلاش کنید.", show_alert=True)
+    # اگر در آینده خواستید پرداخت را فعال کنید، بقیه منطق باید اینجا باشد
+    return # توقف در همین مرحله طبق درخواست کاربر
 
-    order = {
-        "order_id": order_id,
-        "user_id": update.effective_user.id,
-        "chat_id": update.effective_chat.id,
-        "items": cart,
-        "customer": customer,
-        "total": total,
-        "status": "awaiting_payment",
-        "payment": {
-            "provider": PAY.__class__.__name__,
-            "payment_id": payment_id,
-            "create_raw": res.get("raw"),
-        },
-        "created_at": datetime.utcnow().isoformat() + "Z",
-    }
-    STORE.add_order(order)
-    await q.edit_message_text(
-        f"✅ سفارش ثبت شد.\nشماره سفارش: {order_id}\nمبلغ قابل پرداخت: {_ftm_toman(total)}\n\n"
-        "برای تکمیل، روی دکمهٔ زیر بزن:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("💳 رفتن به درگاه پرداخت", url=pay_link)],
-            [InlineKeyboardButton("🏠 منو", callback_data="menu:back_home")],
-        ])
-    )
+    # cart = context.user_data.get("cart" , [])
+    # customer = context.user_data.get("customer", {})
+    # ... (بقیه منطق پرداخت) ...
 
 
 async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
@@ -1230,7 +1187,9 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         # 🟢 تغییر: افزودن پیام هشدار (درخواستی کاربر)
         warning_message = (
             "✅ مشتری گرامی، **کالا مورد نظر به سبد خرید شما اضافه شده**.\n\n"
-            "⚠️ **.لطفاً توجه داشته باشید** که تا پرداخت نهایی، کالا متعلق به شما نمی‌باشد\n\n  "
+            "⚠️ **لطفاً توجه داشته باشید** که تا پرداخت نهایی، کالا متعلق به شما نمی‌باشد و "
+            "اگر مشتری دیگری زودتر پرداخت را انجام دهد، متأسفانه کالا برای ایشان ثبت می‌شود و "
+            "گاهی ممکن است همان لحظه موجودی فروشگاه تمام شود.\n\n"
             "با تشکر، مدیریت فروشگاه ..."
         )
         
