@@ -423,11 +423,25 @@ async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     await q.edit_message_text("جنسیت رو انتخاب کن :" , reply_markup=gender_keyboard())
 
 
-async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str) -> None:
-    q = update.callback_query
-    await q.answer()
-    await q.edit_message_text(f"انتخاب جنسیت: {'👨 مردانه' if gender=='men' else '👩 زنانه'}\nحالا نوع محصول رو انتخاب کن:", reply_markup=category_keyboard(gender))
+async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    نمایش دسته‌بندی محصولات.
+    سازگار شده برای دریافت Message (از Reply Keyboard) و CallbackQuery (از Inline Keyboard).
+    """
+    text = "لطفا یک دسته‌بندی را انتخاب کنید."
+    
+    if update.callback_query:
+        # اگر از دکمه Inline آمده (CallbackQuery)
+        q = update.callback_query
+        await q.answer()
+        # پیام قبلی ویرایش می‌شود
+        await q.edit_message_text(text , reply_markup=category_keyboard())
+    else:
+        # اگر از دکمه Reply Keyboard آمده (Message)
+        # پیام جدیدی برای نمایش منو ارسال می‌شود
+        await update.message.reply_text(text , reply_markup=category_keyboard())
 
+    return
 
 async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str) -> None:
     q = update.callback_query
@@ -579,23 +593,22 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
 
 # این تابع را در کنار سایر توابع Asynchronous (Async) ربات تعریف کنید
 async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # متنی که کاربر ارسال کرده (همان متن دکمه‌ای که کلیک کرده)
+    """
+    روتر برای مدیریت پیام‌های متنی دریافتی از دکمه‌های Reply Keyboard (پایین صفحه).
+    """
+    # در این هندلر، update.message همیشه وجود دارد.
     text = update.message.text
     
-    # 1. مدیریت دکمه "لیست محصولات"
     if text == "🛍️ لیست محصولات":
-        # باید به تابعی ارجاع داده شود که محصولات یا دسته‌بندی‌ها را نمایش می‌دهد.
-        # فرض می‌کنیم تابعی به نام show_categories دارید:
+        # فراخوانی show_categories (که اکنون قابلیت مدیریت Message را دارد)
         await show_categories(update, context) 
     
-    # 2. مدیریت دکمه "سبد خرید"
     elif text == "🧺 سبد خرید":
-        # به تابع نمایش سبد خرید ارجاع داده شود.
+        # فراخوانی show_cart (که اکنون قابلیت مدیریت Message را دارد)
         await show_cart(update, context)
         
-    # 3. مدیریت دکمه "پشتیبانی"
     elif text == "🆘 پشتیبانی":
-        # یک پاسخ متنی ساده برای پشتیبانی
+        # پاسخ مستقیم به کاربر
         await update.message.reply_text("برای پشتیبانی با @Admin_ID تماس بگیرید.")
         
 
@@ -704,50 +717,69 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
 #       cart / checkout
 PHONE_REGEX = re.compile(r"^(\+98|0)?9\d{9}$") # اجازه می‌دهد که با +98 یا 0 یا بدون هیچکدام شروع شود.
 
-async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    cart = context.user_data.get("cart" , [])
+async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    نمایش محتوای سبد خرید.
+    سازگار شده برای دریافت Message (از Reply Keyboard) و CallbackQuery (از Inline Keyboard).
+    """
+    cart: List[Dict] = context.user_data.get("cart" , [])
     
-    # 🌟 NEW: اگر از طریق callback (دکمه) آمده، پیام قبلی را حذف کن 🌟
-    # این کار از تداخل جلوگیری می‌کند و محیط را تمیز نگه می‌دارد.
-    try:
-        await q.message.delete()
-    except Exception as e:
-        logger.debug(f"Could not delete message: {e}")
-        pass
+    total_price = sum(item['price'] * item['qty'] for item in cart)
+    
+    text = ""
+    reply_markup = None
     
     if not cart:
-        # اگر سبد خالی است، به جای ویرایش، یک پیام جدید بفرست
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
-            text="🧺 سبد خرید خالی است.", 
-            reply_markup=main_menu()
-        )
-        return
-    
-    lines = []
-    total = 0
-    for i , it in enumerate(cart , 1):
-        subtotal = it["qty"] * it["price"]
-        total += subtotal
-        # 🌟 FIX: استفاده از Markdown برای نمایش بهتر در سبد خرید
-        lines.append(
-            f"*{i}) {it['name']}* | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
-            f"تعداد: {it['qty']} | هزینه: {_ftm_toman(subtotal)}"
-        )
-    txt = "**اقلام سبد خرید:**\n\n" + "\n".join(lines) + f"\n\n**جمع کل:** {_ftm_toman(total)}"
-    
-    # 🌟 CHANGE: همیشه یک پیام جدید برای نمایش سبد خرید ارسال کن 🌟
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=txt, 
-        reply_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🧾 ادامه و ثبت مشخصات", callback_data="checkout:begin")] , 
-            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
-        ]),
-        parse_mode="Markdown"
-    )
+        # سبد خالی است
+        text = emoji.emojize("سبد خرید شما خالی است :shopping_bags: \n جهت اضافه کردن محصول به منو اصلی بازگردید.")
+        reply_markup = main_menu_reply() # نمایش کیبورد Reply Menu
+    else:
+        # سبد پر است
+        text += emoji.emojize("🛒 لیست محصولات در سبد خرید شما:\n\n")
+        
+        cart_keyboard = []
+        for i, item in enumerate(cart):
+            item_text = f"**{i+1}. {item['name']}**\n"
+            item_text += f"    تعداد: {item['qty']} عدد\n"
+            item_text += f"    قیمت واحد: {item['price']:,} تومان\n"
+            item_text += f"    قیمت کل: {(item['price'] * item['qty']):,} تومان\n"
+            text += item_text + "--------\n"
+            
+            # دکمه‌های Inline برای مدیریت سبد خرید
+            cart_keyboard.append([
+                InlineKeyboardButton("❌ حذف", callback_data=f"cart:del:{i}"),
+                InlineKeyboardButton("➖", callback_data=f"cart:minus:{i}"),
+                InlineKeyboardButton(f"{item['qty']}", callback_data="none"),
+                InlineKeyboardButton("➕", callback_data=f"cart:plus:{i}")
+            ])
+
+        text += f"\n**مجموع مبلغ قابل پرداخت: {total_price:,} تومان**"
+        
+        # دکمه‌های نهایی سبد خرید
+        final_buttons = [
+            InlineKeyboardButton("✅ ثبت سفارش و پرداخت", callback_data="checkout:info"),
+            InlineKeyboardButton("🏠 بازگشت به منو", callback_data="start")
+        ]
+        cart_keyboard.append(final_buttons)
+        reply_markup = InlineKeyboardMarkup(cart_keyboard)
+
+    # ⭐️ منطق اصلی برای مدیریت Reply Keyboard vs Inline Keyboard ⭐️
+    if update.callback_query:
+        # اگر از دکمه Inline آمده (CallbackQuery)
+        q = update.callback_query
+        await q.answer()
+        
+        # پیام قبلی (که دارای دکمه Inline بوده) ویرایش می‌شود
+        if q.message.caption:
+            await q.edit_message_caption(caption=text , reply_markup=reply_markup , parse_mode="Markdown")
+        else:
+            await q.edit_message_text(text , reply_markup=reply_markup , parse_mode="Markdown")
+    else:
+        # اگر از دکمه Reply Keyboard آمده (Message)
+        # یک پیام جدید ارسال می‌شود
+        await update.message.reply_text(text , reply_markup=reply_markup , parse_mode="Markdown")
+
+    return
 
 
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1379,6 +1411,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
