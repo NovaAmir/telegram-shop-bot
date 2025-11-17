@@ -400,6 +400,10 @@ def _decrement_inventory(item:dict):
 #   /start
 
 async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("cart", None)
+    context.user_data.pop("pending", None)
+    context.user_data.pop("customer", None)
+    context.user_data.pop("awaiting", None)
     text = emoji.emojize("سلام:waving_hand:\n به ربات فروشگاه ... خوش آمدید . \n لطفا یکی از گزینه های زیر را انتخاب کنید")
     if update.message:
         await update.message.reply_text(text , reply_markup=main_menu())
@@ -1324,3 +1328,4 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
