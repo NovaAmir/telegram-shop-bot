@@ -424,23 +424,17 @@ async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    نمایش دسته‌بندی محصولات.
-    سازگار شده برای دریافت Message (از Reply Keyboard) و CallbackQuery (از Inline Keyboard).
-    """
     text = "لطفا یک دسته‌بندی را انتخاب کنید."
     
     if update.callback_query:
-        # اگر از دکمه Inline آمده (CallbackQuery)
         q = update.callback_query
         await q.answer()
-        # پیام قبلی ویرایش می‌شود
+        # ویرایش پیام قبلی
         await q.edit_message_text(text , reply_markup=category_keyboard())
     else:
-        # اگر از دکمه Reply Keyboard آمده (Message)
-        # پیام جدیدی برای نمایش منو ارسال می‌شود
+        # ارسال پیام جدید (Reply) - این تضمین می‌کند که از CallbackQuery استفاده نشود
         await update.message.reply_text(text , reply_markup=category_keyboard())
-
+    
     return
 
 async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str) -> None:
@@ -1411,6 +1405,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
