@@ -233,12 +233,13 @@ logger.info(f"CATEGORY_MAP contents: {CATEGORY_MAP}")
 
 #     منوها
 
-def main_menu() -> InlineKeyboardMarkup:
+def main_menu_reply() -> ReplyKeyboardMarkup:
+    """ساخت کیبورد Reply برای منو اصلی (پایین صفحه)"""
     keyboard = [
-        [InlineKeyboardButton("🛍️ لیست محصولات", callback_data="menu:products")] , 
-        [InlineKeyboardButton("🧺 سبد خرید", callback_data="menu:cart")] , 
-        [InlineKeyboardButton("🆘 پشتیبانی", callback_data="menu:support")],]
-    return InlineKeyboardMarkup(keyboard)
+        ["🛍️ لیست محصولات", "🧺 سبد خرید"] , 
+        ["🆘 پشتیبانی"],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 
 def gender_keyboard() -> InlineKeyboardMarkup:
@@ -407,10 +408,11 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("awaiting", None)
     text = emoji.emojize("سلام:waving_hand:\n به ربات فروشگاه ... خوش آمدید . \n لطفا یکی از گزینه های زیر را انتخاب کنید")
     if update.message:
-        await update.message.reply_text(text , reply_markup=main_menu())
+        await update.message.reply_text(text , reply_markup=main_menu_reply())
     else:
         q = update.callback_query
-        await q.edit_message_text(text , reply_markup=main_menu())
+        await q.edit_message_text(text , reply_markup=main_menu_reply())
+        await q.message.reply_text("منو اصلی:", reply_markup=main_menu_reply())
 
 
 #     نمایش مراحل
@@ -573,8 +575,29 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
         f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:",
         reply_markup=InlineKeyboardMarkup(rows)
     )
-    
 
+
+# این تابع را در کنار سایر توابع Asynchronous (Async) ربات تعریف کنید
+async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # متنی که کاربر ارسال کرده (همان متن دکمه‌ای که کلیک کرده)
+    text = update.message.text
+    
+    # 1. مدیریت دکمه "لیست محصولات"
+    if text == "🛍️ لیست محصولات":
+        # باید به تابعی ارجاع داده شود که محصولات یا دسته‌بندی‌ها را نمایش می‌دهد.
+        # فرض می‌کنیم تابعی به نام show_categories دارید:
+        await show_categories(update, context) 
+    
+    # 2. مدیریت دکمه "سبد خرید"
+    elif text == "🧺 سبد خرید":
+        # به تابع نمایش سبد خرید ارجاع داده شود.
+        await show_cart(update, context)
+        
+    # 3. مدیریت دکمه "پشتیبانی"
+    elif text == "🆘 پشتیبانی":
+        # یک پاسخ متنی ساده برای پشتیبانی
+        await update.message.reply_text("برای پشتیبانی با @Admin_ID تماس بگیرید.")
+        
 
 async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
     q = update.callback_query
@@ -1296,6 +1319,11 @@ application.add_handler(CallbackQueryHandler(menu_router))
 # MessageHandler برای تماس و متن باید حذف شود چون در Conversation Handler مدیریت می‌شوند.
 # application.add_handler(MessageHandler(filters.CONTACT , on_contact))
 # application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND , on_text))
+menu_reply_handler = MessageHandler(
+    filters.TEXT & ~filters.COMMAND,
+    menu_reply_router
+)
+application.add_handler(menu_reply_handler)
 
 
 # اجرای event loop در پس‌زمینه
@@ -1351,6 +1379,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
