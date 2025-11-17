@@ -418,6 +418,8 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
 async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     await q.answer()
+    context.user_data.pop("pending", None) 
+    context.user_data.pop("awaiting", None)
     await q.edit_message_text("جنسیت رو انتخاب کن :" , reply_markup=gender_keyboard())
 
 
@@ -1187,6 +1189,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         }
         cart = context.user_data.setdefault("cart" , [])
         _merge_cart_item(cart , item)
+        # --- 🟢 این خط را مطمئن شوید که اینجا وجود دارد ---
         context.user_data.pop("pending" , None)
 
         # 🟢 تغییر: افزودن پیام هشدار (درخواستی کاربر)
@@ -1205,7 +1208,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         )
         # ----------------------------------------------------
 
-        txt = "✅ به سبد خرید اضافه شد.\nمی‌تونی ادامه بدی یا سبد خرید رو ببینی:"
+        txt = " می‌تونی ادامه بدی یا سبد خرید رو ببینی"
         await q.message.reply_text(
             txt,
             reply_markup = InlineKeyboardMarkup([
@@ -1329,4 +1332,5 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
