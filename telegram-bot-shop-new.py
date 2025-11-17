@@ -684,8 +684,22 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     cart = context.user_data.get("cart" , [])
+    
+    # 🌟 NEW: اگر از طریق callback (دکمه) آمده، پیام قبلی را حذف کن 🌟
+    # این کار از تداخل جلوگیری می‌کند و محیط را تمیز نگه می‌دارد.
+    try:
+        await q.message.delete()
+    except Exception as e:
+        logger.debug(f"Could not delete message: {e}")
+        pass
+    
     if not cart:
-        await q.edit_message_text("🧺 سبد خرید خالی است.", reply_markup=main_menu())
+        # اگر سبد خالی است، به جای ویرایش، یک پیام جدید بفرست
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="🧺 سبد خرید خالی است.", 
+            reply_markup=main_menu()
+        )
         return
     
     lines = []
@@ -693,15 +707,23 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i , it in enumerate(cart , 1):
         subtotal = it["qty"] * it["price"]
         total += subtotal
+        # 🌟 FIX: استفاده از Markdown برای نمایش بهتر در سبد خرید
         lines.append(
-            f"{i}) {it['name']} | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
+            f"*{i}) {it['name']}* | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
             f"تعداد: {it['qty']} | هزینه: {_ftm_toman(subtotal)}"
         )
-    txt = "اقلام سبد خرید:\n\n" + "\n".join(lines) + f"\n\nجمع کل: {_ftm_toman(total)}"
-    await q.edit_message_text(txt , reply_markup = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧾 ادامه و ثبت مشخصات", callback_data="checkout:begin")] , 
-        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
-    ]))
+    txt = "**اقلام سبد خرید:**\n\n" + "\n".join(lines) + f"\n\n**جمع کل:** {_ftm_toman(total)}"
+    
+    # 🌟 CHANGE: همیشه یک پیام جدید برای نمایش سبد خرید ارسال کن 🌟
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=txt, 
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🧾 ادامه و ثبت مشخصات", callback_data="checkout:begin")] , 
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ]),
+        parse_mode="Markdown"
+    )
 
 
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1328,4 +1350,5 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
