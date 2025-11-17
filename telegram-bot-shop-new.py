@@ -407,33 +407,56 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("customer", None)
     context.user_data.pop("awaiting", None)
     text = emoji.emojize("سلام:waving_hand:\n به ربات فروشگاه ... خوش آمدید . \n لطفا یکی از گزینه های زیر را انتخاب کنید")
-    if update.message:
-        await update.message.reply_text(text , reply_markup=main_menu_reply())
-    else:
+    
+    # ⭐️ اصلاح: سازگار کردن با CallbackQuery ⭐️
+    if update.callback_query:
         q = update.callback_query
-        await q.edit_message_text(text , reply_markup=main_menu_reply())
-        await q.message.reply_text("منو اصلی:", reply_markup=main_menu_reply())
+        await q.answer()
+        # ویرایش پیام قبلی با دکمه‌های Inline به متن ساده
+        await q.edit_message_text(text) 
+        # ارسال یک پیام جدید با Reply Keyboard
+        await q.message.reply_text(text , reply_markup=main_menu_reply())
+    else:
+        await update.message.reply_text(text , reply_markup=main_menu_reply())
 
 
 #     نمایش مراحل
 
 async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
-    q = update.callback_query
-    await q.answer()
-    await q.edit_message_text("جنسیت رو انتخاب کن :" , reply_markup=gender_keyboard())
+    """
+    نمایش کیبورد انتخاب جنسیت.
+    سازگار شده برای دریافت Message (از Reply Keyboard) و CallbackQuery (از Inline Keyboard).
+    """
+    text = "جنسیت رو انتخاب کن :"
+    reply_markup = gender_keyboard()
+
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        await q.edit_message_text(text , reply_markup=reply_markup)
+    else:
+        # اگر از Reply Keyboard (لیست محصولات) آمده است
+        await update.message.reply_text(text , reply_markup=reply_markup)
 
 
-async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
+async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str) -> None: # ⭐️ تغییر: پذیرش gender ⭐️
+    """
+    نمایش دسته‌بندی محصولات بر اساس جنسیت انتخاب شده.
+    سازگار شده برای دریافت CallbackQuery (چون در این مرحله فقط از Inline Keyboard فراخوانی می‌شود).
+    """
     text = "لطفا یک دسته‌بندی را انتخاب کنید."
-    
+    reply_markup = category_keyboard(gender) # ⭐️ تغییر: ارسال gender به category_keyboard ⭐️
+
+    # در جریان عادی، این تابع همیشه از طریق CallbackQuery فراخوانی می‌شود،
+    # اما منطق را برای اطمینان از سازگاری نگه می‌داریم.
     if update.callback_query:
         q = update.callback_query
         await q.answer()
         # ویرایش پیام قبلی
-        await q.edit_message_text(text , reply_markup=category_keyboard())
+        await q.edit_message_text(text , reply_markup=reply_markup)
     else:
-        # ارسال پیام جدید (Reply) - این تضمین می‌کند که از CallbackQuery استفاده نشود
-        await update.message.reply_text(text , reply_markup=category_keyboard())
+        # حالت اضطراری - اگر از Reply Keyboard آمده بود (که نباید اینگونه باشد)
+        await update.message.reply_text(text , reply_markup=reply_markup)
     
     return
 
@@ -774,6 +797,24 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(text , reply_markup=reply_markup , parse_mode="Markdown")
 
     return
+
+
+async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    روتر برای مدیریت پیام‌های متنی دریافتی از دکمه‌های Reply Keyboard (پایین صفحه).
+    """
+    text = update.message.text
+    
+    if text == "🛍️ لیست محصولات":
+        # هدایت به مرحله اول انتخاب محصولات (انتخاب جنسیت)
+        await show_gender(update, context) 
+    
+    elif text == "🧺 سبد خرید":
+        # تابع show_cart قبلاً اصلاح شد.
+        await show_cart(update, context)
+        
+    elif text == "🆘 پشتیبانی":
+        await update.message.reply_text("برای پشتیبانی با @Admin_ID تماس بگیرید.")
 
 
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1405,6 +1446,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
