@@ -241,6 +241,15 @@ def main_menu_reply() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
+# **[تغییر]** تعریف تابع main_menu برای استفاده از Inline Keyboard در Callback Query ها
+def main_menu() -> InlineKeyboardMarkup:
+    """ساخت کیبورد Inline برای منو اصلی در محیط Callback (بعد از اتمام کار)"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛍️ لیست محصولات" , callback_data="menu:products")] ,
+        [InlineKeyboardButton("🧺 سبد خرید" , callback_data="menu:cart")],
+        [InlineKeyboardButton("🆘 پشتیبانی" , callback_data="menu:support")]
+    ])
+
 
 def gender_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -357,6 +366,28 @@ def _ftm_toman(n:int) -> str :
 
 def _calc_cart_total(cart:List[dict]) -> int:
     return sum(it["qty"] * it["price"] for it in cart)
+
+# **[جدید]** توابع کمکی برای مدیریت سبد خرید (حذف/کم و زیاد کردن)
+def _update_cart_item_qty(cart: List[dict], item_index: int, delta: int) -> bool:
+    """تغییر تعداد یک آیتم در سبد خرید. اگر تعداد به صفر برسد، آیتم حذف می‌شود."""
+    if 0 <= item_index < len(cart):
+        item = cart[item_index]
+        new_qty = item["qty"] + delta
+        if new_qty > 0:
+            item["qty"] = new_qty
+            return True
+        elif new_qty == 0:
+            cart.pop(item_index)
+            return True
+    return False
+
+def _delete_cart_item(cart: List[dict], item_index: int) -> bool:
+    """حذف یک آیتم از سبد خرید"""
+    if 0 <= item_index < len(cart):
+        cart.pop(item_index)
+        return True
+    return False
+# ----------------------------------
 
 
 # تابع کمکی برای تبدیل ارقام فارسی به انگلیسی
@@ -749,7 +780,8 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     if not cart:
         # سبد خالی است
         text = emoji.emojize("سبد خرید شما خالی است :shopping_bags: \n جهت اضافه کردن محصول به منو اصلی بازگردید.")
-        reply_markup = main_menu_reply() # نمایش کیبورد Reply Menu
+        # **[تغییر]** استفاده از main_menu (Inline) برای سازگاری در ویرایش پیام از طریق CallbackQuery
+        reply_markup = main_menu() 
     else:
         # سبد پر است
         text += emoji.emojize("🛒 لیست محصولات در سبد خرید شما:\n\n")
@@ -1136,7 +1168,52 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data == "menu:support":
         await q.edit_message_text(" پشتیبانی: @amirmehdi_84_10", reply_markup=main_menu()) ; return
         
+    # **[تغییر]** شروع بخش هندلرهای سبد خرید
+    # ------------------ مدیریت سبد خرید ------------------
+    cart: List[Dict] = context.user_data.get("cart" , [])
     
+    if data.startswith("cart:del:"):
+        _, _, index_str = data.split(":", 2)
+        try:
+            index = int(index_str)
+            if _delete_cart_item(cart, index):
+                await show_cart(update, context) # نمایش مجدد سبد خرید به‌روز شده
+            else:
+                await q.answer("❌ خطای حذف آیتم.", show_alert=True)
+        except Exception:
+            await q.answer("❌ خطای حذف آیتم.", show_alert=True)
+        return
+        
+    if data.startswith("cart:plus:"):
+        _, _, index_str = data.split(":", 2)
+        try:
+            index = int(index_str)
+            # توجه: موجودی کالا برای افزایش چک نمی‌شود، فقط منطق به‌روزرسانی سبد اجرا می‌شود.
+            if _update_cart_item_qty(cart, index, 1):
+                await show_cart(update, context)
+            else:
+                await q.answer("❌ خطای افزایش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
+        except Exception:
+            await q.answer("❌ خطای افزایش تعداد.", show_alert=True)
+        return
+        
+    if data.startswith("cart:minus:"):
+        _, _, index_str = data.split(":", 2)
+        try:
+            index = int(index_str)
+            # توجه: اگر تعداد صفر شود، آیتم به طور خودکار حذف می‌شود.
+            if _update_cart_item_qty(cart, index, -1):
+                await show_cart(update, context)
+            else:
+                await q.answer("❌ خطای کاهش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
+        except Exception:
+            await q.answer("❌ خطای کاهش تعداد.", show_alert=True)
+        return
+    
+    if data == "none":
+        await q.answer("این دکمه فقط تعداد فعلی را نشان می‌دهد." , show_alert=False) ; return
+        
+    # ------------------ پایان بخش هندلرهای سبد خرید ------------------
     
     if data.startswith("catalog:gender:"):
         _, _, gender = data.split(":" , 2)
@@ -1275,7 +1352,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
             f"\nموجودی:{pend['available']}"
             f"\nقیمت واحد:{_ftm_toman(pend['price'])}"
-            f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend['qty'])}"
+            f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend["qty"])}"
         )
         try:
             await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
@@ -1339,7 +1416,16 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
 
     if data == "checkout:begin":
-        await begin_customer_form(update , context) ; return
+        # توجه: این callback در Conversation Handler مدیریت می‌شود، اما اینجا برای جلوگیری از خطای "گزینه نامعتبر" نگه داشته می‌شود.
+        # در حقیقت، این خط نباید اجرا شود چون در entry_points Conversation Handler گرفته می‌شود.
+        if context.user_data.get("cart"):
+            # اگر در ConvHandler گرفته نشد، اینجا آغاز شود
+            await begin_customer_form(update , context)
+            return 
+        else:
+            await q.answer("❌ سبد خرید شما خالی است.", show_alert=True)
+            await q.edit_message_text("❌ سبد خرید شما خالی است. ابتدا محصولی انتخاب کنید.", reply_markup=main_menu())
+            return
     
 
     if data == "checkout:pay":
@@ -1446,11 +1532,3 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
-
-
-
-
-
-
-
