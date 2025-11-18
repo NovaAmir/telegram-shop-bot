@@ -766,42 +766,35 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
 PHONE_REGEX = re.compile(r"^(\+98|0)?9\d{9}$") # اجازه می‌دهد که با +98 یا 0 یا بدون هیچکدام شروع شود.
 
 async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    نمایش محتوای سبد خرید.
-    سازگار شده برای دریافت Message (از Reply Keyboard) و CallbackQuery (از Inline Keyboard).
-    """
     cart: List[Dict] = context.user_data.get("cart" , [])
-    
     total_price = sum(item['price'] * item['qty'] for item in cart)
-    
     text = ""
     reply_markup = None
-    
     if not cart:
         # سبد خالی است
         text = emoji.emojize("سبد خرید شما خالی است :shopping_bags: \n جهت اضافه کردن محصول به منو اصلی بازگردید.")
         # **[تغییر]** استفاده از main_menu (Inline) برای سازگاری در ویرایش پیام از طریق CallbackQuery
-        reply_markup = main_menu() 
+        reply_markup = main_menu()
     else:
         # سبد پر است
         text += emoji.emojize("🛒 لیست محصولات در سبد خرید شما:\n\n")
-        
         cart_keyboard = []
         for i, item in enumerate(cart):
             item_text = f"**{i+1}. {item['name']}**\n"
-            item_text += f"    تعداد: {item['qty']} عدد\n"
-            item_text += f"    قیمت واحد: {item['price']:,} تومان\n"
-            item_text += f"    قیمت کل: {(item['price'] * item['qty']):,} تومان\n"
+            item_text += f" تعداد: {item['qty']} عدد\n"
+            item_text += f" قیمت واحد: {item['price']:,} تومان\n"
+            item_text += f" قیمت کل: {(item['price'] * item['qty']):,} تومان\n"
             text += item_text + "--------\n"
             
+            # ⭐️ تغییرات اعمال شده: حذف دکمه "❌ حذف" و جایگزینی با شماره آیتم ⭐️
             # دکمه‌های Inline برای مدیریت سبد خرید
             cart_keyboard.append([
-                InlineKeyboardButton("❌ حذف", callback_data=f"cart:del:{i}"),
+                InlineKeyboardButton(f"محصول #{i+1}", callback_data="none"), # نمایش شماره آیتم
                 InlineKeyboardButton("➖", callback_data=f"cart:minus:{i}"),
                 InlineKeyboardButton(f"{item['qty']}", callback_data="none"),
                 InlineKeyboardButton("➕", callback_data=f"cart:plus:{i}")
             ])
-
+        
         text += f"\n**مجموع مبلغ قابل پرداخت: {total_price:,} تومان**"
         
         # دکمه‌های نهایی سبد خرید
@@ -817,7 +810,6 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         # اگر از دکمه Inline آمده (CallbackQuery)
         q = update.callback_query
         await q.answer()
-        
         # پیام قبلی (که دارای دکمه Inline بوده) ویرایش می‌شود
         if q.message.caption:
             await q.edit_message_caption(caption=text , reply_markup=reply_markup , parse_mode="Markdown")
@@ -827,7 +819,6 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         # اگر از دکمه Reply Keyboard آمده (Message)
         # یک پیام جدید ارسال می‌شود
         await update.message.reply_text(text , reply_markup=reply_markup , parse_mode="Markdown")
-
     return
 
 
@@ -1532,3 +1523,4 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
