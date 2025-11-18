@@ -10,7 +10,7 @@ from typing import Dict,List,Optional,Tuple
 import emoji
 import requests
 import asyncio
-import threading
+# import threading # ❌ حذف شد: به دلیل ایجاد تداخل در محیط Production
 from flask import Flask, request
 
 
@@ -762,7 +762,7 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     pend["size"] = chosen_size
     pend["available"] = available
     pend["qty"] = 1 # تنظیم تعداد اولیه
-    # قیمت واحد را با توجه به محصول یا وریانت آپدیت می‌کنیم
+    # قیمت واحد را با توجه به محصول یا واریانت آپدیت می‌کنیم
     pend["price"] = price 
     
     photo = _product_photo_for_list(p)
@@ -1165,8 +1165,7 @@ class DummyProvider:
         return {"ok": True, "raw": {"provider": "dummy", "verified_amount": 1000}} # فرض بر موفقیت آمیز بودن پرداخت
 
 PAY = DummyProvider() # این کلاس باید با یک درگاه پرداخت واقعی جایگزین شود
-CALLBACK_URL = os.getenv("CALLBACK_URL", "").strip() or None
-
+# CALLBACK_URL = os.getenv("CALLBACK_URL", "").strip() or None # ❌ حذف شد: متغیر استفاده نشده
 
 # check out: pay/verify
 async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1477,22 +1476,21 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("برای راهنمایی و پشتیبانی به آیدی @amirmehdi_84_10 پیام دهید.")
 
+# تابع کمکی برای راه‌اندازی ربات در حالت Polling
 async def start_bot():
     """شروع به کار ربات در حالت Pooling (برای توسعه محلی)"""
     logger.info("Starting bot in local (polling) mode...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-    
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 # -------------------- Flask Webhook (برای هاستینگ) --------------------
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip() or None
 PORT = int(os.environ.get("PORT", 8080))
 
-if WEBHOOK_URL:
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-else:
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+# تعریف اپلیکیشن PTB
+application = ApplicationBuilder().token(BOT_TOKEN).build()
     
-# هندلرها
+# هندلرها (هم برای Pooling و هم برای Webhook مشترک هستند)
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
 
@@ -1516,60 +1514,75 @@ application.add_handler(conv_handler)
 # هندلرهای اصلی (بعد از Conversation Handler)
 application.add_handler(CallbackQueryHandler(menu_router))
 
-# -------------------- اجرای ربات --------------------
+
+# ⭐️⭐️⭐️ شروع کدهای مربوط به Webhook (مورد بازنویسی) ⭐️⭐️⭐️
+
+# تعریف Flask app
+flask_app = Flask(__name__) # تعریف app در ریشه ماژول برای Gunicorn
+
+
+# تابع غیرهمزمان برای تنظیم وب‌هوک و شروع PTB
+async def _ptb_init_and_webhook():
+    await application.initialize()
+    await application.bot.set_webhook(
+        url=WEBHOOK_URL,
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
+    logger.info(f"Webhook set to: {WEBHOOK_URL}")
+
+# تابع اجرا کننده همزمان تنظیمات (باید قبل از شروع سرور اجرا شود)
+def setup_webhook_sync():
+    """راه‌اندازی PTB و تنظیم وب‌هوک به صورت همزمان قبل از شروع WSGI server"""
+    import asyncio
+    
+    try:
+        # اگر لوپ فعالی وجود ندارد، لوپ جدیدی بساز
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    loop.run_until_complete(_ptb_init_and_webhook())
+
+
+@flask_app.route("/", methods=["GET", "HEAD"])
+def health():
+    """مسیر Health Check برای اطمینان از بیدار بودن سرویس"""
+    return "Bot is running", 200
+
+@flask_app.post(f"/webhook/{BOT_TOKEN}")
+async def telegram_webhook():
+    """مسیر اصلی دریافت به‌روزرسانی‌ها از تلگرام"""
+    try:
+        # PTB از این نقطه به بعد خودش کارها را به صورت Asynchronous مدیریت می‌کند
+        data = request.get_json(force=True)
+        update = Update.de_json(data, application.bot)
+        
+        # استفاده از application.process_update که به درستی به‌روزرسانی را در لوپ PTB اجرا می‌کند
+        await application.process_update(update)
+        return "OK", 200
+    except Exception as e:
+        logger.exception("webhook handler error: %s", e)
+        return "Error", 500
+
+# ⭐️⭐️⭐️ پایان کدهای مربوط به Webhook ⭐️⭐️⭐️
+
 
 if __name__ == '__main__':
     if WEBHOOK_URL:
-        # تنظیمات و اجرای وب‌هو‌ک
-        logger.info("Running bot with webhook at %s on port %s", WEBHOOK_URL, PORT)
+        # حالت Webhook (مخصوص Render)
         
-        # تنظیمات asyncio برای سازگاری با Flask
-        try:
-            LOOP = asyncio.get_running_loop()
-        except RuntimeError:
-            LOOP = asyncio.new_event_loop()
-            asyncio.set_event_loop(LOOP)
+        # 1. اجرای تنظیمات Async (تنظیم Webhook) به صورت همزمان و یکباره
+        setup_webhook_sync()
+
+        # 2. در این حالت، سرور از طریق دستور استارت خارجی (Gunicorn) اجرا می‌شود.
+        #    مثلا: gunicorn telegram-bot-shop-new\(49\):flask_app -w 4 -b 0.0.0.0:$PORT
         
-        # تابع غیرهمزمان برای تنظیم وب‌هوک
-        async def _ptb_init_and_webhook():
-            await application.start()
-            await application.bot.set_webhook(
-                url=WEBHOOK_URL,
-                drop_pending_updates=True,
-                allowed_updates=Update.ALL_TYPES,
-            )
-            logger.info(f"Webhook set to: {WEBHOOK_URL}")
+        logger.info("Bot configured for Webhook. Waiting for external WSGI server (e.g., Gunicorn) to run 'flask_app'.")
+        # اگر برای تست نیاز به اجرای محلی دارید، می‌توانید خط زیر را فعال کنید:
+        # flask_app.run(host="0.0.0.0", port=PORT, debug=True)
         
-        # اجرای تنظیمات PTB در لوپ اصلی
-        asyncio.run_coroutine_threadsafe(_ptb_init_and_webhook(), LOOP)
-
-        # Flask app
-        flask_app = Flask(__name__)
-
-        @flask_app.route("/", methods=["GET", "HEAD"])
-        def health():
-            return "Bot is running", 200
-
-        @flask_app.post(f"/webhook/{BOT_TOKEN}")
-        def telegram_webhook():
-            try:
-                data = request.get_json(force=True)
-                # استفاده از application.update_queue.put_nowait برای فرستادن آپدیت به لوپ PTB
-                # تا از خطا در thread اصلی وب‌هو‌ک جلوگیری شود.
-                logger.info("Received Update JSON: %s", data)
-                update = Update.de_json(data, application.bot)
-                asyncio.run_coroutine_threadsafe(application.process_update(update), LOOP) 
-                return "OK", 200
-            except Exception as e:
-                logger.exception("webhook handler error: %s", e)
-                return "Error", 500
-
-        # شروع وب سرور Flask
-        # ما باید مطمئن شویم که تمام عملیات‌های asyncio در یک Thread واحد اجرا می‌شوند
-        # بنابراین، Flask را در یک thread جداگانه (و یا به صورت معمول) اجرا می‌کنیم.
-        threading.Thread(target=lambda: LOOP.run_forever()).start()
-        flask_app.run(host="0.0.0.0", port=PORT, debug=False)
-
     else:
-        # اجرای حالت Pooling
-        start_bot()
+        # حالت Polling (برای توسعه محلی)
+        asyncio.run(start_bot())
