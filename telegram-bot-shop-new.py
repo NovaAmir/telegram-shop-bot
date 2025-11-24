@@ -813,7 +813,7 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
             
             item_text = f"**{i+1}. {item['name']}**\n"
             item_text += f" رنگ: {item.get('color') or '—'} | سایز: {item.get('size') or '—'}\n"
-            item_text += f" تعداد: {item['qty']} / موجودی: {max_qty} عدد\n" # ⭐️ (جدید) نمایش موجودی ⭐️
+            item_text += f" تعداد: {item['qty']} / موجودی فروشگاه: {max_qty} عدد\n" # ⭐️ (جدید) نمایش موجودی ⭐️
             item_text += f" قیمت واحد: {item['price']:,} تومان\n"
             item_text += f" قیمت کل: {(item['price'] * item['qty']):,} تومان\n"
             text += item_text + "--------\n"
@@ -826,7 +826,8 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
                 InlineKeyboardButton(f"محصول #{i+1}", callback_data="none"), 
                 InlineKeyboardButton("➖", callback_data=f"cart:minus:{i}"),
                 InlineKeyboardButton(current_qty_display, callback_data="none"),
-                InlineKeyboardButton("➕", callback_data=f"cart:plus:{i}")
+                InlineKeyboardButton("➕", callback_data=f"cart:plus:{i}"),
+                InlineKeyboardButton("🏠 بازگشت به منو", callback_data="menu:back_home")
             ])
         
         text += f"\n**مجموع مبلغ قابل پرداخت: {total_price:,} تومان**"
@@ -1436,7 +1437,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         )
         # ----------------------------------------------------
 
-        txt = "✅ به سبد خرید اضافه شد.\nمی‌تونی ادامه بدی یا سبد خرید رو ببینی:"
+        txt = "می‌تونی به خرید ادامه بدی یا سبد خرید رو مشاهده کنی"
         await q.message.reply_text(
             txt,
             reply_markup = InlineKeyboardMarkup([
@@ -1571,3 +1572,4 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
