@@ -808,7 +808,7 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
             
             item_text = f"**{i+1}. {item['name']}**\n"
             item_text += f" رنگ: {item.get('color') or '—'} | سایز: {item.get('size') or '—'}\n"
-            item_text += f" تعداد: {item['qty']} / موجودی: {max_qty} عدد\n" # ⭐️ (جدید) نمایش موجودی ⭐️
+            item_text += f" تعداد: {item['qty']} /  موجودی فروشگاه: {max_qty} عدد\n" # ⭐️ (جدید) نمایش موجودی ⭐️
             item_text += f" قیمت واحد: {item['price']:,} تومان\n"
             item_text += f" قیمت کل: {(item['price'] * item['qty']):,} تومان\n"
             text += item_text + "--------\n"
@@ -1567,3 +1567,4 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
