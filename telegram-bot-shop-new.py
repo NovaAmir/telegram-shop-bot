@@ -834,8 +834,7 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         # دکمه‌های نهایی سبد خرید
         final_buttons = [
             # ⭐️ (اصلاح) تغییر callback_data به "checkout:begin" برای شروع Conversation Handler ⭐️
-            InlineKeyboardButton("✅ ثبت سفارش و پرداخت", callback_data="checkout:begin"), 
-            InlineKeyboardButton("🏠 بازگشت به منو", callback_data="start")
+            InlineKeyboardButton("✅ ثبت سفارش و پرداخت", callback_data="checkout:begin")
         ]
         cart_keyboard.append(final_buttons)
         reply_markup = InlineKeyboardMarkup(cart_keyboard)
@@ -1572,5 +1571,6 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
