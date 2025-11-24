@@ -826,8 +826,7 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
                 InlineKeyboardButton(f"محصول #{i+1}", callback_data="none"), 
                 InlineKeyboardButton("➖", callback_data=f"cart:minus:{i}"),
                 InlineKeyboardButton(current_qty_display, callback_data="none"),
-                InlineKeyboardButton("➕", callback_data=f"cart:plus:{i}"),
-                InlineKeyboardButton("🏠 بازگشت به منو", callback_data="menu:back_home")
+                InlineKeyboardButton("➕", callback_data=f"cart:plus:{i}")
             ])
         
         text += f"\n**مجموع مبلغ قابل پرداخت: {total_price:,} تومان**"
@@ -1197,7 +1196,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
 
     if data == "menu:back_home":
-        await start(update , context) ; return
+        await start(update, context)
+        return
         
     if data == "menu:products":
         await show_gender(update , context) ; return
@@ -1572,4 +1572,5 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
