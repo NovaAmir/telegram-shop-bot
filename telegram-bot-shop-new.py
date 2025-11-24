@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN","").strip()
 if not BOT_TOKEN :
-    logger.warning("⚠️ متغییر محیطی BOT_TOKEN تنظیم نشده است . قبل از اجرا آن را ست کنید ")
+    logger.warning("⚠️ متغییر محیطی BOT_TOKEN تنظیم نشده است . قبل از اجرا آن را ست کنید .")
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
@@ -367,7 +367,7 @@ def _ftm_toman(n:int) -> str :
 def _calc_cart_total(cart:List[dict]) -> int:
     return sum(it["qty"] * it["price"] for it in cart)
 
-# **[جدید]** توابع کمکی برای مدیریت سبد خرید (حذف/کم و زیاد کردن)
+# **[تغییر]** توابع کمکی برای مدیریت سبد خرید (حذف/کم و زیاد کردن)
 def _update_cart_item_qty(cart: List[dict], item_index: int, delta: int) -> bool:
     """تغییر تعداد یک آیتم در سبد خرید. اگر تعداد به صفر برسد، آیتم حذف می‌شود."""
     if 0 <= item_index < len(cart):
@@ -456,9 +456,10 @@ def _decrement_inventory(item:dict):
 
 async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
+        # پاکسازی اطلاعات موقت فقط در صورت شروع از /start
         context.user_data.pop("cart", None)
+        context.user_data.pop("customer", None)
     context.user_data.pop("pending", None)
-    context.user_data.pop("customer", None)
     context.user_data.pop("awaiting", None)
     text = emoji.emojize("سلام:waving_hand:\n به ربات فروشگاه ... خوش آمدید . \n لطفا یکی از گزینه های زیر را انتخاب کنید")
     
@@ -467,7 +468,11 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         q = update.callback_query
         await q.answer()
         # ویرایش پیام قبلی با دکمه‌های Inline به متن ساده
-        await q.edit_message_text(text) 
+        try:
+             await q.edit_message_text(text) 
+        except Exception:
+             await context.bot.send_message(update.effective_chat.id, text)
+             
         # ارسال یک پیام جدید با Reply Keyboard
         await q.message.reply_text(text , reply_markup=main_menu_reply())
     else:
@@ -808,7 +813,7 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
             
             item_text = f"**{i+1}. {item['name']}**\n"
             item_text += f" رنگ: {item.get('color') or '—'} | سایز: {item.get('size') or '—'}\n"
-            item_text += f" تعداد: {item['qty']} /  موجودی فروشگاه: {max_qty} عدد\n" # ⭐️ (جدید) نمایش موجودی ⭐️
+            item_text += f" تعداد: {item['qty']} / موجودی: {max_qty} عدد\n" # ⭐️ (جدید) نمایش موجودی ⭐️
             item_text += f" قیمت واحد: {item['price']:,} تومان\n"
             item_text += f" قیمت کل: {(item['price'] * item['qty']):,} تومان\n"
             text += item_text + "--------\n"
@@ -828,7 +833,8 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         
         # دکمه‌های نهایی سبد خرید
         final_buttons = [
-            InlineKeyboardButton("✅ ثبت سفارش و پرداخت", callback_data="checkout:info"),
+            # ⭐️ (اصلاح) تغییر callback_data به "checkout:begin" برای شروع Conversation Handler ⭐️
+            InlineKeyboardButton("✅ ثبت سفارش و پرداخت", callback_data="checkout:begin"), 
             InlineKeyboardButton("🏠 بازگشت به منو", callback_data="start")
         ]
         cart_keyboard.append(final_buttons)
@@ -866,26 +872,27 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await show_cart(update, context)
         
     elif text == "🆘 پشتیبانی":
-        await update.message.reply_text("برای پشتیبانی با @Admin_ID تماس بگیرید.")
+        await update.message.reply_text("برای پشتیبانی با @amirmehdi_84_10 تماس بگیرید.")
 
 
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     if context.user_data.get("cart"):
+        # تنظیم awaiter برای مرحله اول
+        context.user_data["awaiting"] = "name"
+        # ⭐️ اصلاح: ویرایش پیام به جای ارسال پیام جدید ⭐️
         await q.edit_message_text(
             "نام و نام خانوادگی را وارد کن:",
             reply_markup = InlineKeyboardMarkup.from_button(
-                InlineKeyboardButton("انصراف" , callback_data="flow:cancel")
+                InlineKeyboardButton("❌ انصراف و بازگشت به سبد", callback_data="flow:cancel")
             ),
         )
-        context.user_data["awaiting"] = "name"
         return CUSTOMER_NAME
     else:
-        # اینجا باید به منو اصلی برگردد نه اینکه پیغام خطا را در context:checkout:begin نمایش دهد.
+        # اگر سبد خالی بود، به منوی اصلی بازگردد.
         await q.edit_message_text("❌ سبد خرید شما خالی است. ابتدا محصولی انتخاب کنید.", reply_markup=main_menu())
         return ConversationHandler.END
-
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -915,12 +922,12 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # نرمال‌سازی شماره به فرمت استاندارد 09xxxxxxxxx برای ذخیره‌سازی
             if phone.startswith("+98"):
                 phone = "0" + phone[3:] # حذف +98 و جایگزینی با 0
-            elif not phone.startswith("0"):
+            elif not phone.startswith("0") and len(phone) == 10:
                 phone = "0" + phone # اضافه کردن 0 اگر با 9 شروع شده باشد
             
             context.user_data["customer"]["phone"] = phone
             context.user_data["awaiting"] = "address"
-            await update.message.reply_text("آدرس:", reply_markup=ReplyKeyboardRemove())
+            await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=ReplyKeyboardRemove())
             return CUSTOMER_ADDRESS
         else:
             await update.message.reply_text("شماره نامعتبر است. با قالب 09xxxxxxxxx (فارسی یا انگلیسی) وارد کن.")
@@ -934,6 +941,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if re.fullmatch(r"\d{10}" , _to_english_digits(text)): # اعمال تبدیل برای کدپستی هم توصیه می‌شود
             context.user_data["customer"]["postal"] = _to_english_digits(text)
             context.user_data["awaiting"] = None
+            # ⭐️ (جدید) نمایش خلاصه پس از اتمام جمع‌آوری اطلاعات ⭐️
             await show_checkout_summary(update.message, context)
             return ConversationHandler.END
         else:
@@ -959,7 +967,7 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
              
         context.user_data["customer"]["phone"] = phone
         context.user_data["awaiting"] = "address"
-        await update.message.reply_text("آدرس:", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=ReplyKeyboardRemove())
         return CUSTOMER_ADDRESS
     else:
         await update.message.reply_text("شمارهٔ دریافتی نامعتبر بود. لطفاً دستی وارد کن.")
@@ -967,6 +975,7 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYPE):
+    # ⭐️ اصلاح شده برای تعیین chat_id و send function ⭐️
     if isinstance(update_or_msg, Update):
         chat_id = update_or_msg.effective_chat.id
         send = context.bot.send_message
@@ -977,6 +986,11 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     cart = context.user_data.get("cart" , [])
     customer = context.user_data.get("customer" , {})
     total = _calc_cart_total(cart)
+    
+    # اگر اطلاعات مشتری کامل نیست (مثلاً اگر در میان فرآیند ConversationHandler خطا رخ دهد)
+    if not all(k in customer for k in ["name", "phone", "address", "postal"]):
+        await send(chat_id=chat_id, text="❌ خطایی در جمع‌آوری اطلاعات رخ داد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu())
+        return
 
     lines = []
     for i , it in enumerate(cart , 1):
@@ -985,7 +999,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
             f"تعداد: {it['qty']} | {_ftm_toman(it['qty'] * it['price'])}"
         )
     
-    # 🟢 تغییر: نمایش خلاصه سفارش و اطلاعات مشتری با فرمت Markdown
+    # 🟢 نمایش خلاصه سفارش و اطلاعات مشتری با فرمت Markdown
     info = (
         "🧾 **خلاصه سفارش و مشخصات مشتری**:\n\n"
         "👤 **نام و نام خانوادگی**: `{name}`\n"
@@ -1002,10 +1016,13 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         postal=customer.get('postal', '—')
     )
     
-    # 🟢 تغییر: متن دکمه پرداخت به حالت Placeholder
+    # 🟢 دکمه‌های مورد درخواست کاربر
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
-        [InlineKeyboardButton("💳 اقدام به پرداخت نهایی (فعلا غیرفعال)", callback_data="checkout:pay")], # تغییر متن دکمه
+        # دکمه ویرایش (شروع مجدد Conversation Handler)
+        [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")], 
+        # دکمه پرداخت (غیرفعال)
+        [InlineKeyboardButton("💳 اقدام به پرداخت نهایی (فعلاً غیرفعال)", callback_data="checkout:pay")], 
+        # دکمه لغو و منوی اصلی
         [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
     ])
@@ -1084,8 +1101,8 @@ CALLBACK_URL = os.getenv("CALLBACK_URL", "").strip() or None
 #      check out: pay/verify
 async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer("فعلاً درگاه پرداخت غیرفعال است. لطفاً بعداً تلاش کنید.", show_alert=True)
-    # اگر در آینده خواستید پرداخت را فعال کنید، بقیه منطق باید اینجا باشد
+    # ⭐️ (اصلاح) پیام غیرفعال بودن پرداخت طبق درخواست کاربر ⭐️
+    await q.answer("❌ درگاه پرداخت فعلاً فعال نیست. لطفا برای ثبت نهایی با پشتیبانی تماس بگیرید.", show_alert=True)
     return # توقف در همین مرحله طبق درخواست کاربر
 
     # cart = context.user_data.get("cart" , [])
@@ -1192,20 +1209,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     # ------------------ مدیریت سبد خرید ------------------
     cart: List[Dict] = context.user_data.get("cart" , [])
     
-    # ⭐️ توجه: منطق cart:del: در این نسخه حذف شده بود و توسط شما به عنوان "محصول #i" جایگزین شده بود. 
-    # برای جلوگیری از خطا، این بخش را کامنت می‌کنم تا در صورت نیاز بتوانید آن را برگردانید.
-    # if data.startswith("cart:del:"):
-    #     _, _, index_str = data.split(":", 2)
-    #     try:
-    #         index = int(index_str)
-    #         if _delete_cart_item(cart, index):
-    #             await show_cart(update, context) # نمایش مجدد سبد خرید به‌روز شده
-    #         else:
-    #             await q.answer("❌ خطای حذف آیتم.", show_alert=True)
-    #     except Exception:
-    #         await q.answer("❌ خطای حذف آیتم.", show_alert=True)
-    #     return
-        
+    # ... هندلرهای cart:plus و cart:minus بدون تغییر نسبت به اصلاحیه قبلی ...
+
     if data.startswith("cart:plus:"):
         _, _, index_str = data.split(":", 2)
         try:
@@ -1246,7 +1251,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         return
     
     if data == "none":
-        await q.answer("این دکمه فقط تعداد فعلی/موجودی را نشان می‌دهد." , show_alert=False) ; return # ⭐️ تغییر متن پیام ⭐️
+        await q.answer("این دکمه فقط تعداد فعلی/موجودی را نشان می‌دهد." , show_alert=False) ; return 
         
     # ------------------ پایان بخش هندلرهای سبد خرید ------------------
     
@@ -1444,23 +1449,19 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
 
     if data == "flow:cancel":
+        # هنگام انصراف از فرم، به سبد خرید برمی‌گردد
         context.user_data.pop("pending" , None)
         context.user_data['awaiting'] = None
-        await q.edit_message_text("لغو شد.", reply_markup=main_menu())
+        await show_cart(update, context) # نمایش سبد خرید
         return
     
 
+    # checkout:begin توسط ConversationHandler در entry_points مدیریت می‌شود.
+    # اگر این کد اجرا شود، یعنی ConversationHandler موفق به آغاز نشده است.
     if data == "checkout:begin":
-        # توجه: این callback در Conversation Handler مدیریت می‌شود، اما اینجا برای جلوگیری از خطای "گزینه نامعتبر" نگه داشته می‌شود.
-        # در حقیقت، این خط نباید اجرا شود چون در entry_points Conversation Handler گرفته می‌شود.
-        if context.user_data.get("cart"):
-            # اگر در ConvHandler گرفته نشد، اینجا آغاز شود
-            await begin_customer_form(update , context)
-            return 
-        else:
-            await q.answer("❌ سبد خرید شما خالی است.", show_alert=True)
-            await q.edit_message_text("❌ سبد خرید شما خالی است. ابتدا محصولی انتخاب کنید.", reply_markup=main_menu())
-            return
+        await q.answer("❌ خطا در اجرای فرم. لطفاً یک بار دیگر تلاش کنید.", show_alert=True)
+        await show_cart(update, context)
+        return
     
 
     if data == "checkout:pay":
@@ -1490,6 +1491,7 @@ application.add_handler(CommandHandler("start", start))
 
 # Conversation Handler برای فرم مشتری
 conv_handler = ConversationHandler(
+    # ⭐️ (اصلاح) entry_points: شروع مکالمه با زدن دکمه "ثبت سفارش و پرداخت" یا "ویرایش مشخصات" ⭐️
     entry_points=[CallbackQueryHandler(begin_customer_form, pattern=r"^checkout:begin$")],
     states={
         CUSTOMER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
@@ -1497,6 +1499,7 @@ conv_handler = ConversationHandler(
         CUSTOMER_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
         CUSTOMER_POSTAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
     },
+    # ⭐️ fallbacks: بازگشت به سبد خرید در صورت انصراف ⭐️
     fallbacks=[CallbackQueryHandler(menu_router, pattern=r"^flow:cancel$")]
 )
 application.add_handler(conv_handler)
@@ -1504,9 +1507,8 @@ application.add_handler(conv_handler)
 
 # هندلرهای اصلی (بعد از Conversation Handler)
 application.add_handler(CallbackQueryHandler(menu_router))
-# MessageHandler برای تماس و متن باید حذف شود چون در Conversation Handler مدیریت می‌شوند.
-# application.add_handler(MessageHandler(filters.CONTACT , on_contact))
-# application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND , on_text))
+
+# هندلر برای Reply Keyboard (منوهای پایین صفحه)
 menu_reply_handler = MessageHandler(
     filters.TEXT & ~filters.COMMAND,
     menu_reply_router
@@ -1567,4 +1569,3 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
