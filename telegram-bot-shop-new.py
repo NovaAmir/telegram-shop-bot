@@ -941,8 +941,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if re.fullmatch(r"\d{10}" , _to_english_digits(text)): # اعمال تبدیل برای کدپستی هم توصیه می‌شود
             context.user_data["customer"]["postal"] = _to_english_digits(text)
             context.user_data["awaiting"] = None
-            # ⭐️ (جدید) نمایش خلاصه پس از اتمام جمع‌آوری اطلاعات ⭐️
-            await show_checkout_summary(update.message, context)
+            # ⭐️ (اصلاح شده) فراخوانی با کل شیء update برای استخراج دقیق chat_id
+            await show_checkout_summary(update, context) 
             return ConversationHandler.END
         else:
             await update.message.reply_text("کد پستی نامعتبر است. ۱۰ رقم (فارسی یا انگلیسی) وارد کنید.")
@@ -976,12 +976,14 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYPE):
     # ⭐️ اصلاح شده برای تعیین chat_id و send function ⭐️
+    # این منطق تضمین می‌کند که حتی اگر Update.message یا Update.callback_query نداشته باشیم (مثلاً فقط Message object باشد)،
+    # باز هم chat_id به درستی استخراج شود و از context.bot.send_message برای ارسال مطمئن استفاده شود.
     if isinstance(update_or_msg, Update):
         chat_id = update_or_msg.effective_chat.id
-        send = context.bot.send_message
-    else: # اگر مستقیماً از یک message فراخوانی شده است
+    else: # اگر مستقیماً یک Message object باشد (مثل update.message)
         chat_id = update_or_msg.chat.id
-        send = update_or_msg.reply_text
+    
+    send = context.bot.send_message
     
     cart = context.user_data.get("cart" , [])
     customer = context.user_data.get("customer" , {})
