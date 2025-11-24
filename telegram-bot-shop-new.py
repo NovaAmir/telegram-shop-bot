@@ -197,7 +197,7 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
                       "sizes":{"40":3 , "41":2 , "43":3}
                   },
                   "سفید":{
-                      "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/ec042c22e457c962511c3d014d513aefd96cf593_1635272463.webp" , 
+                      "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/ec042c22e457c96251c3d014d513aefd96cf593_1635272463.webp" , 
                       "price":540_000 , 
                       "sizes":{"40":3 , "41":2 , "43":2 , "44":3}
                   }
@@ -387,6 +387,29 @@ def _delete_cart_item(cart: List[dict], item_index: int) -> bool:
         cart.pop(item_index)
         return True
     return False
+
+# ⭐️ (جدید) تابع کمکی برای استخراج موجودی کالا از CATALOG ⭐️
+def _get_item_inventory(item: Dict) -> int:
+    """موجودی یک آیتم خاص در انبار را از CATALOG پیدا می کند."""
+    p = _find_product(item["gender"], item["category"], item["product_id"])
+    if not p:
+        return 0
+    
+    color = item.get("color")
+    size = item.get("size")
+    
+    # محصول دارای وریانت (رنگ) است
+    if "variants" in p and color:
+        variant = p["variants"].get(color)
+        if variant and size:
+            # موجودی به صورت int ذخیره شده است
+            return int(variant["sizes"].get(size, 0))
+    # محصول بدون وریانت (رنگ) است
+    elif "sizes" in p and size:
+        # موجودی به صورت int ذخیره شده است
+        return int(p["sizes"].get(size, 0))
+    
+    return 0
 # ----------------------------------
 
 
@@ -649,7 +672,7 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     if text == "🛍️ لیست محصولات":
         # فراخوانی show_categories (که اکنون قابلیت مدیریت Message را دارد)
-        await show_categories(update, context) 
+        await show_gender(update, context) 
     
     elif text == "🧺 سبد خرید":
         # فراخوانی show_cart (که اکنون قابلیت مدیریت Message را دارد)
@@ -780,18 +803,24 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         text += emoji.emojize("🛒 لیست محصولات در سبد خرید شما:\n\n")
         cart_keyboard = []
         for i, item in enumerate(cart):
+            # ⭐️ (جدید) محاسبه موجودی در هر بار نمایش ⭐️
+            max_qty = _get_item_inventory(item) 
+            
             item_text = f"**{i+1}. {item['name']}**\n"
-            item_text += f" تعداد: {item['qty']} عدد\n"
+            item_text += f" رنگ: {item.get('color') or '—'} | سایز: {item.get('size') or '—'}\n"
+            item_text += f" تعداد: {item['qty']} / موجودی: {max_qty} عدد\n" # ⭐️ (جدید) نمایش موجودی ⭐️
             item_text += f" قیمت واحد: {item['price']:,} تومان\n"
             item_text += f" قیمت کل: {(item['price'] * item['qty']):,} تومان\n"
             text += item_text + "--------\n"
             
-            # ⭐️ تغییرات اعمال شده: حذف دکمه "❌ حذف" و جایگزینی با شماره آیتم ⭐️
             # دکمه‌های Inline برای مدیریت سبد خرید
+            # ⭐️ (اصلاح) نمایش تعداد فعلی در دکمه وسط به صورت (تعداد/موجودی) ⭐️
+            current_qty_display = f"{item['qty']}/{max_qty}" 
+            
             cart_keyboard.append([
-                InlineKeyboardButton(f"محصول #{i+1}", callback_data="none"), # نمایش شماره آیتم
+                InlineKeyboardButton(f"محصول #{i+1}", callback_data="none"), 
                 InlineKeyboardButton("➖", callback_data=f"cart:minus:{i}"),
-                InlineKeyboardButton(f"{item['qty']}", callback_data="none"),
+                InlineKeyboardButton(current_qty_display, callback_data="none"),
                 InlineKeyboardButton("➕", callback_data=f"cart:plus:{i}")
             ])
         
@@ -1163,27 +1192,42 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     # ------------------ مدیریت سبد خرید ------------------
     cart: List[Dict] = context.user_data.get("cart" , [])
     
-    if data.startswith("cart:del:"):
-        _, _, index_str = data.split(":", 2)
-        try:
-            index = int(index_str)
-            if _delete_cart_item(cart, index):
-                await show_cart(update, context) # نمایش مجدد سبد خرید به‌روز شده
-            else:
-                await q.answer("❌ خطای حذف آیتم.", show_alert=True)
-        except Exception:
-            await q.answer("❌ خطای حذف آیتم.", show_alert=True)
-        return
+    # ⭐️ توجه: منطق cart:del: در این نسخه حذف شده بود و توسط شما به عنوان "محصول #i" جایگزین شده بود. 
+    # برای جلوگیری از خطا، این بخش را کامنت می‌کنم تا در صورت نیاز بتوانید آن را برگردانید.
+    # if data.startswith("cart:del:"):
+    #     _, _, index_str = data.split(":", 2)
+    #     try:
+    #         index = int(index_str)
+    #         if _delete_cart_item(cart, index):
+    #             await show_cart(update, context) # نمایش مجدد سبد خرید به‌روز شده
+    #         else:
+    #             await q.answer("❌ خطای حذف آیتم.", show_alert=True)
+    #     except Exception:
+    #         await q.answer("❌ خطای حذف آیتم.", show_alert=True)
+    #     return
         
     if data.startswith("cart:plus:"):
         _, _, index_str = data.split(":", 2)
         try:
             index = int(index_str)
-            # توجه: موجودی کالا برای افزایش چک نمی‌شود، فقط منطق به‌روزرسانی سبد اجرا می‌شود.
-            if _update_cart_item_qty(cart, index, 1):
-                await show_cart(update, context)
+            if 0 <= index < len(cart):
+                item = cart[index]
+                # ⭐️ (جدید) بررسی موجودی ⭐️
+                max_qty = _get_item_inventory(item)
+                
+                if item["qty"] + 1 <= max_qty:
+                    if _update_cart_item_qty(cart, index, 1):
+                        await show_cart(update, context)
+                    else:
+                        await q.answer("❌ خطای افزایش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
+                else:
+                    # ⭐️ (جدید) نمایش پیام محدودیت موجودی ⭐️
+                    await q.answer(
+                        f"❌ متأسفانه موجودی این کالا ({item['name']}) فقط {max_qty} عدد است و شما {item['qty']} عدد در سبد دارید.", 
+                        show_alert=True
+                    )
             else:
-                await q.answer("❌ خطای افزایش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
+                await q.answer("❌ خطای افزایش تعداد. (آیتم نامعتبر)", show_alert=True)
         except Exception:
             await q.answer("❌ خطای افزایش تعداد.", show_alert=True)
         return
@@ -1202,7 +1246,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         return
     
     if data == "none":
-        await q.answer("این دکمه فقط تعداد فعلی را نشان می‌دهد." , show_alert=False) ; return
+        await q.answer("این دکمه فقط تعداد فعلی/موجودی را نشان می‌دهد." , show_alert=False) ; return # ⭐️ تغییر متن پیام ⭐️
         
     # ------------------ پایان بخش هندلرهای سبد خرید ------------------
     
@@ -1523,4 +1567,3 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
