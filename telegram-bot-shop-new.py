@@ -105,15 +105,15 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
         "کفش":[
             {"id": "men-shoe-running-hobi-gs8226" , 
              "name":"کفش رانینگ هابی مدل GS8226" , 
-             "thumbnail" : "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/35adcfd858a7dc85c88988f3d5c45ae20c715a02_1752785555.webp" ,
+             "thumbnail" : "https://res.cloudinary.com/dkzhxotve/image/upload/v1766765624/men-shoe-running-hobi-gs8226_ysltf6.webp" ,
              "variants": {
                  "مشکی" : {
-                     "photo" : "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/35adcfd858a7dc85c88988f3d5c45ae20c715a02_1752785555.webp" ,
+                     "photo" : "https://res.cloudinary.com/dkzhxotve/image/upload/v1766765624/men-shoe-running-hobi-gs8226_ysltf6.webp" ,
                      "price" : 1_500_000 ,
                      "sizes" : {"40":3 , "41":1 , "42":4 , "43":3 ,  "44":2}
                     },
                  "سفید" : {
-                     "photo" : "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/15b7fe4d53208c04e109aa3bce8d099153a00f5c_1752815442.webp" ,
+                     "photo" : "https://res.cloudinary.com/dkzhxotve/image/upload/v1766765777/men-shoe-running-hobi-gs8226-white_omgvwk.webp" ,
                      "price" : 1_300_000 ,
                      "sizes" : {"40":2 , "41":0 , "42":3 , "43":2 , "44":1}
                  }
@@ -122,15 +122,15 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
             # FIX: شناسه محصول حاوی فاصله برای Air Force 1
             {"id":"men-shoe-Air-Force-1-WH-1990" , 
              "name":"کفش پیاده روی مردانه مدل Air Force 1 WH 1990" ,
-             "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/5665c3110aee39673eb5818ad1e5460c85a5e4e8_1657457249.webp" , 
+             "thumbnail":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766765980/men-shoe-Air-Force-1-WH-1990_j4fbuc.webp" , 
              "variants":{
                  "مشکی" : {
-                     "photo" : "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/download.webp" , 
+                     "photo" : "https://res.cloudinary.com/dkzhxotve/image/upload/v1766766101/men-shoe-Air-Force-1-WH-1990Black_yn6bny.webp" , 
                      "price" : 650_000 , 
                      "sizes" : {"39":3 , "40":5 , "42":2 , "43":1}
                  },
                  "سفید" : {
-                     "photo" : "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/5665c3110aee39673eb5818ad1e5460c85a5e4e8_1657457249.webp" ,
+                     "photo" : "https://res.cloudinary.com/dkzhxotve/image/upload/v1766765980/men-shoe-Air-Force-1-WH-1990_j4fbuc.webp" ,
                      "price" : 650_000 , 
                      "sizes" : {"40":3 , "41":2 , "43":3} 
                  }
@@ -142,13 +142,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
             # FIX: شناسه محصول حاوی فاصله برای MDSS-CG3719
             {"id":"men-shirt-MDSS-CG3719" , 
              "name":"پیراهن آستین بلند مردانه مدل MDSS-CG3719" , 
-             "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/9a7c3ddeb6558e2d798678b89df60d6f801be3fd_1723288662.webp" ,
+             "thumbnail": "https://res.cloudinary.com/dkzhxotve/image/upload/v1766766209/men-shirt-MDSS-CG3719_jh4u0w.webp" ,
              "price" : 3_000_000 ,
              "sizes":{"L":4 , "XL":5 , "XXL":3}
              },
              {"id":"men-shirt-SB-SS-4513" , 
               "name":"پیراهن آستین بلند مردانه مدل SB-SS-4513" , 
-              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/2e31b5f7959ecb020cd95af79c22bb97a96d7c46_1703611532.webp" , 
+              "thumbnail":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766766299/men-shirt-SB-SS-4513_rrqpuv.webp" , 
               "price": 2_500_000 ,
               "sizes":{"L":3 , "XL":4 , "XXL":2}
               }
@@ -156,22 +156,22 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
         "تی شرت" : [
             {"id":"men-Tshirt-model TS63 B" , 
              "name":"تی شرت اورسایز مردانه نوزده نودیک مدل TS63 B" , 
-             "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/6d5e77c9b3f25d11050c9e714675678b38314efa_1755035663.webp" , 
+             "thumbnail":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766766391/men-Tshirt-model_TS63_B_aleauo.webp" , 
              "price" : 900_000 ,
              "sizes":{"L":3 , "XL":4 , "XXL":4}
              },
              {"id":"men-Tshirt-model TS1962 B" , 
               "name":"تی شرت ورزشی مردانه نوزده نودیک مدل TS1962 B" ,
-              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/deaaf226e0ef806723b4972f933cfffc6e5e9a76_1675938042.webp" , 
+              "thumbnail":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766766520/men-Tshirt-model_TS1962_B_bwvbs0.webp" , 
               "variants":{
                   "مشکی":{
-                      "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/d311f870573c4c6b8735dff9cebb5444228fe3ba_1675937971.webp" , 
+                      "photo":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766766705/men-Tshirt-model_TS1962_Black_2_yohqzw.webp" , 
                       "price":550_000 , 
                       "sizes":{"L":2 , "XL":2 , "XXL":2}
 
                   },
                   "سفید":{
-                      "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/668c0ffa1728779857a691c38d95a2bd6da9e3b2_1675853820.webp" , 
+                      "photo":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766766876/men-Tshirt-model_TS63_white_binvpk.webp" , 
                       "price":550_000 , 
                       "sizes":{"L":2 , "XL":3 , "XXL":2}
                   }
@@ -183,21 +183,21 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
         "کفش":[
             {"id":"women-shoe-charm" , 
              "name": "کفش روزمره زنانه چرم درسا مدل 49569" , 
-             "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/90ebe7a01f96086e63f0fc631962b019b9a4a75b_1732030099.webp" , 
+             "thumbnail": "https://res.cloudinary.com/dkzhxotve/image/upload/v1766767007/women-shoe-charm_gbhjjh.webp" , 
              "price": 9_100_000 , 
              "sizes" : {"40":2 , "41":0 , "42":3 , "43":2 , "44":1}
              },
              {"id":"women-shoe-3Fashion M.D" , 
               "name":"کفش روزمره زنانه مدل Fashion سه چسب M.D" , 
-              "thumbnail": "https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/285ea7731ca73c3dc525744bfda9cc41d2be5183_1635272433.webp" , 
+              "thumbnail": "https://res.cloudinary.com/dkzhxotve/image/upload/v1766767092/women-shoe-3Fashion_M.D_so7q56.webp" , 
               "variants":{
                   "مشکی":{
-                      "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/e36e35ddb30e9943407173f4a179e18fc4e7cb3e_1638708382.webp" , 
+                      "photo":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766767290/women-shoe-charm-B_zqdqlh.webp" , 
                       "price":520_000 , 
                       "sizes":{"40":3 , "41":2 , "43":3}
                   },
                   "سفید":{
-                      "photo":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/ec042c22e457c96251c3d014d513aefd96cf593_1635272463.webp" , 
+                      "photo":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766767092/women-shoe-3Fashion_M.D_so7q56.webp" , 
                       "price":540_000 , 
                       "sizes":{"40":3 , "41":2 , "43":2 , "44":3}
                   }
@@ -208,13 +208,13 @@ CATALOG: Dict[str,Dict[str,List[Dict]]] = {
         "شلوار":[
              {"id":"women-pants-bag-lenin" , 
               "name":"شلوار زنانه مدل بگ لینن کنفی" , 
-              "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/refs/heads/main/55ceaeb80ec2d0464a47880afd966769f00e3faa_1748870325.webp" , 
+              "thumbnail":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766767361/women-pants-bag-lenin_czquax.webp" , 
               "price":800_000 , 
               "sizes":{"44":6 , "46":5 , "50":3 , "52":4}
               } , 
             {"id":"women-pants-rita-m-kerm" , # شناسه کوتاه شده برای جلوگیری از Button_data_invalid
              "name":"شلوار زنانه مدل ریتا مازراتی راسته رنگ کرم روشن" ,
-             "thumbnail":"https://github.com/NovaAmir/telegram_shop_image/raw/main/20251112222400589692652.jpg" , 
+             "thumbnail":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766767424/20251112222400589692652_pwel0m.jpg" , 
              "price":560_000 , 
              "sizes":{"44":3 , "46":3 , "50":2 , "52":4}
             }
