@@ -985,27 +985,29 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
     if context.user_data.get("cart"):
-        # تنظیم awaiter برای مرحله اول
         context.user_data["awaiting"] = "name"
-        # ⭐️ اصلاح: ویرایش پیام به جای ارسال پیام جدید ⭐️
-        await q.edit_message_text(
-            "نام و نام خانوادگی را وارد کن:",
-            reply_markup = InlineKeyboardMarkup.from_button(
-                InlineKeyboardButton("❌ انصراف و بازگشت به سبد", callback_data="flow:cancel")
-            ),
+
+        text = (
+            "✍️ لطفاً نام و نام خانوادگی را وارد کن.\n\n"
+            "❌ برای لغو فرم مشخصات می‌توانید گزینه «انصراف» را بزنید."
         )
-        # ✅ جایگزینی منوی اصلی با کیبورد ساده فرم (حذف نمی‌شود)
+
+        # 👇 فقط یک پیام ارسال می‌شود
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="✍️ لطفاً نام و نام خانوادگی را ارسال کن. برای لغو فرم: ❌ انصراف",
-            reply_markup=form_keyboard(),
+            text=text,
+            reply_markup=form_keyboard()
         )
         return CUSTOMER_NAME
     else:
-        # اگر سبد خالی بود، به منوی اصلی بازگردد.
-        await q.edit_message_text("❌ سبد خرید شما خالی است. ابتدا محصولی انتخاب کنید.", reply_markup=main_menu())
+        await q.edit_message_text(
+            "❌ سبد خرید شما خالی است.",
+            reply_markup=main_menu()
+        )
         return ConversationHandler.END
+
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1708,5 +1710,6 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
