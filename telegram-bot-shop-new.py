@@ -1010,7 +1010,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting"] = "phone"
         kb = ReplyKeyboardMarkup(
             [[{"text": "📱 ارسال شماره من", "request_contact": True}]],
-            resize_keyboard=True, one_time_keyboard=True
+            resize_keyboard=True, one_time_keyboard=False
         )
         await update.message.reply_text("شماره تماس خود را وارد کنید:", reply_markup=kb)
         return CUSTOMER_PHONE
@@ -1028,7 +1028,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             context.user_data["customer"]["phone"] = phone
             context.user_data["awaiting"] = "address"
-            await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=ReplyKeyboardRemove())
+            await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=main_menu_reply())
             return CUSTOMER_ADDRESS
         else:
             await update.message.reply_text("شماره نامعتبر است. با قالب 09xxxxxxxxx (فارسی یا انگلیسی) وارد کن.")
@@ -1068,7 +1068,7 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
              
         context.user_data["customer"]["phone"] = phone
         context.user_data["awaiting"] = "address"
-        await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=main_menu_reply())
         return CUSTOMER_ADDRESS
     else:
         await update.message.reply_text("شمارهٔ دریافتی نامعتبر بود. لطفاً دستی وارد کن.")
@@ -1674,5 +1674,6 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
