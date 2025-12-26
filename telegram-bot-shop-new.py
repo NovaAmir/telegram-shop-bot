@@ -241,6 +241,12 @@ def main_menu_reply() -> ReplyKeyboardMarkup:
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
+def form_keyboard() -> ReplyKeyboardMarkup:
+    """کیبورد ساده مخصوص فرم (فقط انصراف). منوی اصلی را موقتاً جایگزین می‌کند."""
+    keyboard = [["❌ انصراف"]]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+
 # **[تغییر]** تعریف تابع main_menu برای استفاده از Inline Keyboard در Callback Query ها
 def main_menu() -> InlineKeyboardMarkup:
     """ساخت کیبورد Inline برای منو اصلی در محیط Callback (بعد از اتمام کار)"""
@@ -989,6 +995,12 @@ async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE
                 InlineKeyboardButton("❌ انصراف و بازگشت به سبد", callback_data="flow:cancel")
             ),
         )
+        # ✅ جایگزینی منوی اصلی با کیبورد ساده فرم (حذف نمی‌شود)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✍️ لطفاً نام و نام خانوادگی را ارسال کن. برای لغو فرم: ❌ انصراف",
+            reply_markup=form_keyboard(),
+        )
         return CUSTOMER_NAME
     else:
         # اگر سبد خالی بود، به منوی اصلی بازگردد.
@@ -1005,11 +1017,21 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = update.message.text.strip()
 
+    # ✅ لغو فرم از طریق Reply Keyboard
+    if text == "❌ انصراف":
+        context.user_data.pop("customer", None)
+        context.user_data.pop("pending", None)
+        context.user_data["awaiting"] = None
+        await update.message.reply_text("❌ فرم لغو شد. از منوی پایین استفاده کن.", reply_markup=main_menu_reply())
+        # بازگشت به سبد (اختیاری)
+        await show_cart(update, context)
+        return ConversationHandler.END
+
     if awaiting == "name":
         context.user_data.setdefault("customer", {})["name"] = text
         context.user_data["awaiting"] = "phone"
         kb = ReplyKeyboardMarkup(
-            [[{"text": "📱 ارسال شماره من", "request_contact": True}]],
+            [[{"text": "📱 ارسال شماره من", "request_contact": True}], ["❌ انصراف"]],
             resize_keyboard=True, one_time_keyboard=False
         )
         await update.message.reply_text("شماره تماس خود را وارد کنید:", reply_markup=kb)
@@ -1028,7 +1050,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             context.user_data["customer"]["phone"] = phone
             context.user_data["awaiting"] = "address"
-            await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=main_menu_reply())
+            await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=form_keyboard())
             return CUSTOMER_ADDRESS
         else:
             await update.message.reply_text("شماره نامعتبر است. با قالب 09xxxxxxxxx (فارسی یا انگلیسی) وارد کن.")
@@ -1068,7 +1090,7 @@ async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
              
         context.user_data["customer"]["phone"] = phone
         context.user_data["awaiting"] = "address"
-        await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=main_menu_reply())
+        await update.message.reply_text("آدرس کامل و دقیق (شامل شهر، خیابان، پلاک):", reply_markup=form_keyboard())
         return CUSTOMER_ADDRESS
     else:
         await update.message.reply_text("شمارهٔ دریافتی نامعتبر بود. لطفاً دستی وارد کن.")
@@ -1131,6 +1153,12 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
     ])
     await send(chat_id=chat_id, text=info, reply_markup=kb, parse_mode="Markdown")
+    # ✅ بازگرداندن منوی اصلی (Reply Keyboard) بعد از اتمام فرم
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="✅ فرم تکمیل شد. از منوی پایین می‌تونی ادامه بدی.",
+        reply_markup=main_menu_reply(),
+    )
 
 
 #      payment_provider
@@ -1579,6 +1607,12 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         context.user_data.pop("pending" , None)
         context.user_data['awaiting'] = None
         await q.edit_message_text("❌ سفارش لغو شد. سبد خرید خالی شد.", reply_markup=main_menu())
+        # ✅ بازگرداندن منوی اصلی (Reply Keyboard)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="از منوی پایین می‌تونی ادامه بدی.",
+            reply_markup=main_menu_reply(),
+        )
         return
 
     if data.startswith("checkout:verify:"):
@@ -1674,6 +1708,5 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
 
 
