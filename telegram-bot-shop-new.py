@@ -1,4 +1,4 @@
-from telegram import (Update , InlineKeyboardButton , InlineKeyboardMarkup , ReplyKeyboardMarkup , ReplyKeyboardRemove)
+from telegram import (Update , InlineKeyboardButton , InlineKeyboardMarkup , ReplyKeyboardMarkup , ReplyKeyboardRemove, InputMediaPhoto)
 from telegram.ext import (ApplicationBuilder , CommandHandler , ContextTypes , CallbackQueryHandler , Application , MessageHandler , filters , ConversationHandler)
 import logging
 import os
@@ -321,6 +321,26 @@ def qty_keyboard(qty:int , max_qty:int) -> InlineKeyboardMarkup:
 
 #     Helpers
 
+# --- (NEW) Product list message tracking (for cleanup on selection) ---
+def _track_product_list_msg(context: ContextTypes.DEFAULT_TYPE, message_id: int):
+    context.user_data.setdefault("product_list_msg_ids", [])
+    context.user_data["product_list_msg_ids"].append(int(message_id))
+
+async def _clear_product_list_msgs(update: Update, context: ContextTypes.DEFAULT_TYPE, keep_message_id: int | None = None):
+    chat_id = update.effective_chat.id
+    ids = context.user_data.get("product_list_msg_ids", [])
+    for mid in ids:
+        if keep_message_id is not None and int(mid) == int(keep_message_id):
+            continue
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=int(mid))
+        except Exception:
+            pass
+    context.user_data["product_list_msg_ids"] = []
+# --- end tracking helpers ---
+
+
+
 def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
     for p in CATALOG.get(gender , {}).get(category , []):
         if p.get("id") == product_id:
@@ -519,6 +539,7 @@ async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , ge
     
     return
 
+
 async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str) -> None:
     q = update.callback_query
     await q.answer()
@@ -529,16 +550,25 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
         try:
             await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
         except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="فعلا محصولی در این دسته نیست",
+                reply_markup=category_keyboard(gender)
+            )
         return
 
-    # سعی می‌کنیم پیام اولیه را ویرایش کنیم؛ در صورت شکست، پیام جدید می‌فرستیم
+    # --- reset and track list messages for this view ---
+    context.user_data["product_list_msg_ids"] = []
+
+    # هدر لیست
     title = f"👇 محصولات دسته «{category}» 👇"
     try:
         await q.edit_message_text(title)
+        _track_product_list_msg(context, q.message.message_id)
     except Exception as e:
         logger.debug("Could not edit message for product list header: %s", e)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=title)
+        m = await context.bot.send_message(chat_id=update.effective_chat.id, text=title)
+        _track_product_list_msg(context, m.message_id)
 
     # ارسال هر محصول جداگانه — مقاوم در برابر خطا و با کمی تأخیر برای جلوگیری از flood
     for p in items:
@@ -551,28 +581,42 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
             btn = InlineKeyboardButton("انتخاب", callback_data=f"catalog:sizeonly:{gender}:{_safe_callback(category)}:{p['id']}")
         keyboard = InlineKeyboardMarkup([[btn]])
 
-        # ارسال مقاوم: اول تلاش برای ارسال عکس (اگر موجود)، در صورت خطا یا نبود عکس -> ارسال متن
         try:
             if photo:
-                # از context.bot.send_photo استفاده کنیم چون معمولاً پایدارتر است
-                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=photo, caption=caption, reply_markup=keyboard)
+                m = await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=photo,
+                    caption=caption,
+                    reply_markup=keyboard
+                )
+                _track_product_list_msg(context, m.message_id)
             else:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=caption, reply_markup=keyboard)
+                m = await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=caption,
+                    reply_markup=keyboard
+                )
+                _track_product_list_msg(context, m.message_id)
         except Exception as e:
             logger.warning("Failed to send product %s (id=%s): %s. Falling back to text.", p.get("name"), p.get("id"), e)
             try:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"{caption}\n(⚠️ تصویر قابل نمایش نیست)", reply_markup=keyboard)
+                m = await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"{caption}\n(⚠️ تصویر قابل نمایش نیست)",
+                    reply_markup=keyboard
+                )
+                _track_product_list_msg(context, m.message_id)
             except Exception as e2:
                 logger.error("Fallback send_message also failed for product %s: %s", p.get("id"), e2)
-        # کمی صبر کن تا telegram مانع نشه (معمولاً مشکل race/flood حل میشه)
+
         try:
             await asyncio.sleep(0.08)
         except Exception:
             pass
 
-    # پیام راهنما و دکمه بازگشت (در انتها)
+    # پیام راهنما و دکمه بازگشت (در انتها) — این هم جزو لیست است و باید پاک شود
     try:
-        await context.bot.send_message(
+        m = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"دسته: {category}\nبرای انتخاب هر محصول روی دکمهٔ زیر عکس آن کلیک کن.",
             reply_markup=InlineKeyboardMarkup([
@@ -580,41 +624,59 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
                 [InlineKeyboardButton("🏠 منو اصلی", callback_data="menu:back_home")],
             ])
         )
+        _track_product_list_msg(context, m.message_id)
     except Exception as e:
         logger.debug("Failed to send category footer: %s", e)
-    
+
+
 async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, gender:str, category:str, product_id:str) -> None:
     q = update.callback_query
     await q.answer()
 
+    # ✅ مرحله C: پاک کردن کل لیست محصولات (به جز همین پیام انتخاب‌شده)
+    await _clear_product_list_msgs(update, context, keep_message_id=q.message.message_id)
+
     p = _find_product(gender, category, product_id)
     if not p or "variants" not in p:
-        await q.message.reply_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
+        await q.edit_message_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
 
     rows = []
-    # در اینجا از enumerate استفاده می‌کنیم تا به جای ارسال نام طولانی رنگ، فقط ایندکس آن را در callback بفرستیم.
     for i, (color, v) in enumerate(p["variants"].items()):
         available_sizes = [sz for sz, qty in v["sizes"].items() if qty > 0]
         for sz in available_sizes:
-            btn_text = f"{color} | سایز {sz}"
             rows.append([InlineKeyboardButton(
-                btn_text,
-                # استفاده از ایندکس رنگ (i) به جای نام آن برای کوتاه شدن callback_data
+                f"{color} | سایز {sz}",
                 callback_data=f"catalog:choose:{gender}:{_safe_callback(category)}:{product_id}:{i}:{sz}"
             )])
-    
+
     if not rows:
-        await q.message.reply_text("هیچ رنگ و سایزی برای این محصول موجود نیست.", reply_markup=category_keyboard(gender))
+        await q.edit_message_text("هیچ رنگ و سایزی برای این محصول موجود نیست.", reply_markup=category_keyboard(gender))
         return
-        
+
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
 
-    await q.message.reply_text(
-        f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:",
-        reply_markup=InlineKeyboardMarkup(rows)
-    )
-    
+    caption = f"✅ {p['name']}\nلطفاً رنگ و سایز را انتخاب کن:"
+    thumb = _product_photo_for_list(p)
+
+    # ✅ نمایش محصول انتخابی (عکس + دکمه‌ها) با Edit
+    try:
+        if thumb:
+            await context.bot.edit_message_media(
+                chat_id=update.effective_chat.id,
+                message_id=q.message.message_id,
+                media=InputMediaPhoto(media=thumb, caption=caption),
+                reply_markup=InlineKeyboardMarkup(rows)
+            )
+        else:
+            await q.edit_message_text(caption, reply_markup=InlineKeyboardMarkup(rows))
+    except Exception:
+        # fallback اگر پیام عکس‌دار باشد ولی edit_message_media شکست بخورد
+        try:
+            await q.edit_message_caption(caption=caption, reply_markup=InlineKeyboardMarkup(rows))
+        except Exception:
+            await q.edit_message_text(text=caption, reply_markup=InlineKeyboardMarkup(rows))
+
 
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
     q = update.callback_query
@@ -648,26 +710,47 @@ async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE
     )
 
 
+
 async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id):
     q = update.callback_query
     await q.answer()
 
+    # ✅ مرحله C: پاک کردن کل لیست محصولات (به جز همین پیام انتخاب‌شده)
+    await _clear_product_list_msgs(update, context, keep_message_id=q.message.message_id)
+
     p = _find_product(gender, category, product_id)
     if not p or "sizes" not in p:
-        await q.message.reply_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
+        await q.edit_message_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
         return
+
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
-    # FIX: اطمینان از اینکه product_id با وجود اصلاحات، به درستی در callback استفاده شود.
-    rows = [[InlineKeyboardButton(f"سایز {sz}", callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{product_id}:{sz}")] for sz in available_sizes]
+    rows = [[InlineKeyboardButton(
+        f"سایز {sz}",
+        callback_data=f"catalog:chooseonly:{gender}:{_safe_callback(category)}:{product_id}:{sz}"
+    )] for sz in available_sizes]
+
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
-    
-    await q.message.reply_text(
-        f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:",
-        reply_markup=InlineKeyboardMarkup(rows)
-    )
+
+    caption = f"✅ {p['name']}\nلطفاً سایز را انتخاب کن:"
+    thumb = _product_photo_for_list(p)
+
+    try:
+        if thumb:
+            await context.bot.edit_message_media(
+                chat_id=update.effective_chat.id,
+                message_id=q.message.message_id,
+                media=InputMediaPhoto(media=thumb, caption=caption),
+                reply_markup=InlineKeyboardMarkup(rows)
+            )
+        else:
+            await q.edit_message_text(caption, reply_markup=InlineKeyboardMarkup(rows))
+    except Exception:
+        try:
+            await q.edit_message_caption(caption=caption, reply_markup=InlineKeyboardMarkup(rows))
+        except Exception:
+            await q.edit_message_text(text=caption, reply_markup=InlineKeyboardMarkup(rows))
 
 
-# این تابع را در کنار سایر توابع Asynchronous (Async) ربات تعریف کنید
 async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     روتر برای مدیریت پیام‌های متنی دریافتی از دکمه‌های Reply Keyboard (پایین صفحه).
@@ -688,45 +771,44 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("برای پشتیبانی با @Admin_ID تماس بگیرید.")
         
 
+
 async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
     q = update.callback_query
     await q.answer()
 
     pend = context.user_data.get("pending")
     if not pend:
-        await q.message.reply_text("اطلاعات محصول ناقص است.", reply_markup=main_menu())
+        await q.edit_message_text("اطلاعات محصول ناقص است.", reply_markup=main_menu())
         return
-    
+
     # برای محصولات بدون رنگ
     p = _find_product(pend["gender"], pend["category"], pend["product_id"])
     if not p:
-        await q.message.reply_text("محصول پیدا نشد.", reply_markup=main_menu())
+        await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
         return
-        
+
     sizes = p.get("sizes")
     price = p.get("price")
-    
+
     if "variants" in p and pend.get("color"):
-        # اگر محصول دارای رنگ بود، از وریانت‌های آن استفاده می‌کنیم
         color_variant = p["variants"].get(pend["color"])
         if color_variant:
             sizes = color_variant.get("sizes")
             price = color_variant.get("price")
 
     if not sizes or chosen_size not in sizes:
-        await q.message.reply_text("سایز انتخابی معتبر نیست.", reply_markup=main_menu())
+        await q.edit_message_text("سایز انتخابی معتبر نیست.", reply_markup=main_menu())
         return
-        
+
     available = int(sizes.get(chosen_size, 0))
     if available <= 0:
-        await q.message.reply_text("این سایز موجود نیست.", reply_markup=main_menu())
+        await q.edit_message_text("این سایز موجود نیست.", reply_markup=main_menu())
         return
 
     pend["size"] = chosen_size
     pend["available"] = available
     pend["qty"] = 1
-    # قیمت واحد را با توجه به محصول یا وریانت آپدیت می‌کنیم
-    pend["price"] = price 
+    pend["price"] = price
 
     photo = _product_photo_for_list(p)
     cap = (
@@ -735,15 +817,25 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
         f"قیمت واحد: {_ftm_toman(price)}\n"
         f"قیمت نهایی: {_ftm_toman(price)}"
     )
-    if photo:
-        # FIX: افزودن try/except برای جلوگیری از توقف برنامه در صورت عدم ارسال عکس
+
+    # ✅ مرحله D: به‌جای پیام جدید، همان پیام قبلی را ویرایش کن
+    try:
+        if photo:
+            await context.bot.edit_message_media(
+                chat_id=update.effective_chat.id,
+                message_id=q.message.message_id,
+                media=InputMediaPhoto(media=photo, caption=cap),
+                reply_markup=qty_keyboard(1, available)
+            )
+        else:
+            await q.edit_message_text(cap, reply_markup=qty_keyboard(1, available))
+    except Exception as e:
+        logger.error(f"Failed to edit message in qty picker for {p.get('id')}: {e}. Falling back to caption/text edit.")
         try:
-            await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
-        except Exception as e:
-            logger.error(f"Failed to send photo in qty picker for {p.get('id')}: {e}. Falling back to text.")
-            await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
-    else:
-        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(1, available))
+        except Exception:
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(1, available))
+
 
 
 async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT_TYPE, gender, category, product_id, color, size):
@@ -751,14 +843,14 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
     await q.answer()
 
     p = _find_product(gender, category, product_id)
-    # اینجا نیازی به چک کردن color in p["variants"] نیست چون color را از ایندکس گرفته‌ایم
     if not p or "variants" not in p:
-        await q.message.reply_text("محصول یا رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+        await q.edit_message_text("محصول یا رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
         return
+
     v = p["variants"][color]
     available = int(v["sizes"].get(size, 0))
     if available <= 0:
-        await q.message.reply_text("این سایز موجود نیست.", reply_markup=main_menu())
+        await q.edit_message_text("این سایز موجود نیست.", reply_markup=main_menu())
         return
 
     context.user_data["pending"] = {
@@ -772,6 +864,7 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
         "available": available,
         "qty": 1,
     }
+
     photo = v.get("photo") or _product_photo_for_list(p)
     cap = (
         f"{p['name']}\nرنگ: {color} | سایز: {size}\n"
@@ -779,15 +872,24 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
         f"قیمت واحد: {_ftm_toman(v['price'])}\n"
         f"قیمت نهایی: {_ftm_toman(v['price'])}"
     )
-    if photo:
-        # FIX: افزودن try/except برای جلوگیری از توقف برنامه در صورت عدم ارسال عکس
+
+    # ✅ مرحله D: به‌جای پیام جدید، همان پیام قبلی را ویرایش کن
+    try:
+        if photo:
+            await context.bot.edit_message_media(
+                chat_id=update.effective_chat.id,
+                message_id=q.message.message_id,
+                media=InputMediaPhoto(media=photo, caption=cap),
+                reply_markup=qty_keyboard(1, available)
+            )
+        else:
+            await q.edit_message_text(cap, reply_markup=qty_keyboard(1, available))
+    except Exception as e:
+        logger.error(f"Failed to edit message in combined qty picker for {p.get('id')}: {e}. Falling back to caption/text edit.")
         try:
-            await q.message.reply_photo(photo=photo, caption=cap, reply_markup=qty_keyboard(1, available))
-        except Exception as e:
-            logger.error(f"Failed to send photo in combined qty picker for {p.get('id')}: {e}. Falling back to text.")
-            await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
-    else:
-        await q.message.reply_text(cap, reply_markup=qty_keyboard(1, available))
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(1, available))
+        except Exception:
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(1, available))
 
 
 #       cart / checkout
@@ -1000,6 +1102,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
             f"تعداد: {it['qty']} | {_ftm_toman(it['qty'] * it['price'])}"
         )
     
+    joined_lines = "\n".join(lines)
     # 🟢 نمایش خلاصه سفارش و اطلاعات مشتری با فرمت Markdown
     info = (
         "🧾 **خلاصه سفارش و مشخصات مشتری**:\n\n"
@@ -1008,7 +1111,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         "🏠 **آدرس**: `{address}`\n"
         "📮 **کد پستی**: `{postal}`\n\n"
         "🛍️ **محصولات سفارش داده شده**:\n"
-        f"{'\n'.join(lines)}\n\n"
+        f"{joined_lines}\n\n"
         f"💰 **مبلغ قابل پرداخت**: **{_ftm_toman(total)}**"
     ).format(
         name=customer.get('name', '—'),
@@ -1394,7 +1497,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
             f"\nموجودی:{pend['available']}"
             f"\nقیمت واحد:{_ftm_toman(pend['price'])}"
-            f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend["qty"])}"
+            f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend['qty'])}"
         )
         try:
             await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
@@ -1571,6 +1674,5 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
 
 
