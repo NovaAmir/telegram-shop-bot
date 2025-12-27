@@ -26,7 +26,7 @@ if not BOT_TOKEN :
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
 # Manual card payment settings
-CARD_NUMBER = "6104338705632277"
+CARDS = [{"name":"امیرمهدی پیری" , "number":"6104-3387-0563-2277"} , {"name":"امیرمهدی پیری" , "number":"5859-8312-1142-9799"}]
 CARD_HOLDER_NAME = "نام صاحب کارت"
 ADMIN_USERNAME = "@Amirmehdi_84_11"
 
@@ -1276,7 +1276,8 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
         "🔹 شماره کارت فروشگاه (برای کپی، روی آن بزنید):\n"
         f"👤 به نام: **{CARD_HOLDER_NAME}**\n"
-        f"`{CARD_NUMBER}`\n\n"
+        card = order.get("card", CARDS[0])
+        f"👤 به نام: **{card['name']}**\n`{card['number']}`\n\n"
         "بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
     )
 
@@ -2142,6 +2143,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
