@@ -756,28 +756,7 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
         except Exception:
             await q.edit_message_text(text=caption, reply_markup=InlineKeyboardMarkup(rows))
 
-
-async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    روتر برای مدیریت پیام‌های متنی دریافتی از دکمه‌های Reply Keyboard (پایین صفحه).
-    """
-    # در این هندلر، update.message همیشه وجود دارد.
-    text = update.message.text
-    
-    if text == "🛍️ لیست محصولات":
-        # فراخوانی show_categories (که اکنون قابلیت مدیریت Message را دارد)
-        await show_gender(update, context) 
-    
-    elif text == "🧺 سبد خرید":
-        # فراخوانی show_cart (که اکنون قابلیت مدیریت Message را دارد)
-        await show_cart(update, context)
-        
-    elif text == "🆘 پشتیبانی":
-        # پاسخ مستقیم به کاربر
-        await update.message.reply_text("برای پشتیبانی با @Admin_ID تماس بگیرید.")
-        
-
-
+       
 async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
     q = update.callback_query
     await q.answer()
@@ -1015,7 +994,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return 
     awaiting = context.user_data.get("awaiting")
     if not awaiting:
-        return
+        await menu_reply_router(update, context)
+        return ConversationHandler.END
     
     text = update.message.text.strip()
 
@@ -1710,6 +1690,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
