@@ -27,6 +27,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
 # Manual card payment settings
 CARD_NUMBER = "6104338705632277"
+CARD_HOLDER_NAME = "نام صاحب کارت"
 ADMIN_USERNAME = "@Amirmehdi_84_11"
 
 
@@ -250,6 +251,7 @@ def main_menu_reply() -> ReplyKeyboardMarkup:
     keyboard = [
         ["🛍️ لیست محصولات", "🧺 سبد خرید"] , 
         ["🆘 پشتیبانی"],
+        ["📦 وضعیت سفارش"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -991,10 +993,52 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # تابع show_cart قبلاً اصلاح شد.
         await show_cart(update, context)
         
+    elif text == "📦 وضعیت سفارش":
+        await show_order_status(update, context)
+
     elif text == "🆘 پشتیبانی":
         await update.message.reply_text("برای پشتیبانی با @amirmehdi_84_10 تماس بگیرید.")
 
 
+
+
+async def show_order_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show latest order shipping/payment status for this user."""
+    chat_id = update.effective_chat.id
+    orders = [o for o in STORE.data.get("orders", []) if o.get("user_chat_id") == chat_id]
+    if not orders:
+        await update.message.reply_text("هنوز سفارشی برای شما ثبت نشده است.", reply_markup=main_menu_reply())
+        return
+
+    orders.sort(key=lambda o: o.get("created_at", ""), reverse=True)
+    o = orders[0]
+
+    status = o.get("status", "unknown")
+    ship_status = o.get("shipping_status", "processing")
+    tracking = o.get("tracking_code")
+
+    status_map = {
+        "awaiting_receipt": "در انتظار ارسال رسید",
+        "receipt_submitted": "رسید ارسال شده (در انتظار بررسی)",
+        "receipt_rejected": "رسید رد شده (نیاز به ارسال مجدد)",
+        "receipt_approved": "پرداخت تایید شده",
+    }
+    ship_map = {
+        "processing": "در حال آماده‌سازی",
+        "shipped": "ارسال شده (تحویل پست)",
+        "delivered": "تحویل داده شد",
+    }
+
+    text = (
+        f"📦 وضعیت آخرین سفارش شما:\n"
+        f"🧾 شماره سفارش: `{o.get('order_id')}`\n"
+        f"💳 وضعیت پرداخت: *{status_map.get(status, status)}*\n"
+        f"🚚 وضعیت ارسال: *{ship_map.get(ship_status, ship_status)}*\n"
+    )
+    if tracking:
+        text += f"🔎 کد رهگیری: `{tracking}`\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu_reply())
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -1213,6 +1257,8 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
         "user_id": update.effective_user.id if update.effective_user else None,
         "username": (update.effective_user.username if update.effective_user else None),
         "receipt": None,
+        "shipping_status": "processing",
+        "tracking_code": None,
     }
     STORE.add_order(order)
     context.user_data["current_order_id"] = order_id
@@ -1229,6 +1275,7 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         "💳 **پرداخت کارت به کارت**\n\n"
         f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
         "🔹 شماره کارت فروشگاه (برای کپی، روی آن بزنید):\n"
+        f"👤 به نام: **{CARD_HOLDER_NAME}**\n"
         f"`{CARD_NUMBER}`\n\n"
         "بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
     )
@@ -1342,6 +1389,7 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     admin_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ تایید پرداخت", callback_data=f"admin:approve:{order_id}")],
         [InlineKeyboardButton("❌ مشکل دارد", callback_data=f"admin:reject:{order_id}")],
+        [InlineKeyboardButton("📦 ثبت کد رهگیری پست", callback_data=f"admin:track:{order_id}")],
     ])
 
     try:
@@ -1422,32 +1470,82 @@ async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Admin types a message after pressing 'مشکل دارد' to send to user."""
+    """Admin types a message for pending admin actions (reject reason or tracking code)."""
     if not update.message:
         return
-    pending = context.bot_data.get("admin_pending_reply")
+
     admin_id = _ensure_admin_chat_id()
-    if not pending or not admin_id:
+    if not admin_id:
         return
     if update.effective_chat.id != admin_id:
         return
 
-    msg = update.message.text.strip()
+    msg = (update.message.text or "").strip()
+    if not msg:
+        return
+
+    # 1) Pending tracking code
+    pending_track = context.bot_data.get("admin_pending_tracking")
+    if pending_track:
+        order_id = pending_track.get("order_id")
+        user_chat_id = pending_track.get("user_chat_id")
+        if order_id and user_chat_id:
+            STORE.update_order(
+                order_id,
+                shipping_status="shipped",
+                tracking_code=msg,
+                shipped_at=datetime.utcnow().isoformat() + "Z",
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=int(user_chat_id),
+                    text=(
+                        f"📦 سفارش `{order_id}` ارسال شد و تحویل پست گردید.\n"
+                        f"🔎 کد رهگیری: `{msg}`\n\n"
+                        "اگر سوالی داشتید به پشتیبانی پیام بدهید."
+                    ),
+                    parse_mode="Markdown",
+                    reply_markup=main_menu_reply()
+                )
+            except Exception as e:
+                logger.error("Failed to send tracking to user: %s", e)
+
+            await update.message.reply_text("✅ کد رهگیری برای مشتری ارسال شد.")
+        context.bot_data.pop("admin_pending_tracking", None)
+        return
+
+    # 2) Pending reject reason
+    pending = context.bot_data.get("admin_pending_reply")
+    if not pending:
+        return
+
     order_id = pending.get("order_id")
     user_chat_id = pending.get("user_chat_id")
     if not (order_id and user_chat_id):
         context.bot_data.pop("admin_pending_reply", None)
         return
 
-    # update order status
-    STORE.update_order(order_id, status="receipt_rejected", rejected_at=datetime.utcnow().isoformat() + "Z", reject_message=msg)
+    STORE.update_order(
+        order_id,
+        status="receipt_rejected",
+        rejected_at=datetime.utcnow().isoformat() + "Z",
+        reject_message=msg,
+    )
 
     try:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📸 ارسال مجدد رسید", callback_data=f"receipt:start:{order_id}")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+        ])
         await context.bot.send_message(
             chat_id=int(user_chat_id),
-            text=f"❌ رسید پرداخت برای سفارش `{order_id}` تایید نشد.\n\nپیام ادمین: {msg}",
+            text=(
+                f"❌ رسید پرداخت برای سفارش `{order_id}` تایید نشد.\n\n"
+                f"📩 پیام ادمین:\n{msg}\n\n"
+                "لطفاً روی «ارسال مجدد رسید» بزنید و دوباره عکس رسید را ارسال کنید."
+            ),
             parse_mode="Markdown",
-            reply_markup=main_menu_reply()
+            reply_markup=kb
         )
     except Exception as e:
         logger.error("Failed to send reject message to user: %s", e)
@@ -1456,6 +1554,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.bot_data.pop("admin_pending_reply", None)
 
 # ------------------ end manual payment / receipt workflow ------------------
+
 
 #      payment_provider
 class DummyProvider:
@@ -1656,6 +1755,11 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data.startswith("admin:reject:"):
         _, _, order_id = data.split(":", 2)
         await admin_reject_start(update, context, order_id)
+        return
+
+    if data.startswith("admin:track:"):
+        _, _, order_id = data.split(":", 2)
+        await admin_track_start(update, context, order_id)
         return
     # ---- end manual payment / receipt callbacks ----
 
