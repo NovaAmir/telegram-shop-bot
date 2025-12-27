@@ -1975,7 +1975,7 @@ application.add_handler(CallbackQueryHandler(menu_router))
 application.add_handler(MessageHandler(filters.PHOTO, on_receipt_photo))
 
 # Admin text reply handler (when admin writes a reason for rejection)
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_text_reply))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_text_reply),group=1)
 
 # هندلر برای Reply Keyboard (منوهای پایین صفحه)
 menu_reply_handler = MessageHandler(
@@ -2038,6 +2038,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
