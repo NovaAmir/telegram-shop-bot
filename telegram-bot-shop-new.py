@@ -26,7 +26,7 @@ if not BOT_TOKEN :
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
 # Manual card payment settings
-CARD_NUMBER = "6104338705632277"
+CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277"} , {"holder":"امیرمهدی پیری" , "number": "5859831211429799"}]
 ADMIN_USERNAME = "@Amirmehdi_84_11"
 
 
@@ -1224,14 +1224,19 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     order = STORE.find_order(order_id)
     if order:
         total = order.get("total", 0)
+    
+    cards_text = ""
+    for i, card in enumerate(CARDS, start=1):
+        cards_text += (f"{i}) 👤 به نام: *{card['holder']}*\n"f"`{card['number']}`\n\n")
 
     text = (
-        "💳 **پرداخت کارت به کارت**\n\n"
-        f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
-        "🔹 شماره کارت فروشگاه (برای کپی، روی آن بزنید):\n"
-        f"`{CARD_NUMBER}`\n\n"
-        "بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
-    )
+    "💳 **پرداخت کارت به کارت**\n\n"
+    f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
+    "🔹 اطلاعات حساب‌های فروشگاه (برای کپی، روی شماره بزنید):\n\n"
+    f"{cards_text}"
+    "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
+)
+
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
