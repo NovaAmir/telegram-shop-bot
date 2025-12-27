@@ -25,6 +25,10 @@ if not BOT_TOKEN :
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
+# Manual card payment settings
+CARD_NUMBER = "6104338705632277"
+ADMIN_USERNAME = "@Amirmehdi_84_11"
+
 
 def _safe_callback(val):
     import re
@@ -97,6 +101,14 @@ class Storge:
         return None
 
 STORE = Storge()
+
+# If admin chat id not set via env, try loading from storage
+if not ADMIN_CHAT_ID:
+    try:
+        ADMIN_CHAT_ID = STORE.data.get("admin_chat_id") or None
+    except Exception:
+        ADMIN_CHAT_ID = None
+
 
 
 #        catalog
@@ -506,6 +518,28 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
 
 
 #     نمایش مراحل
+
+
+# --- Admin registration helpers ---
+async def admin_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Register current chat as admin chat. Run this from the admin account in a private chat with the bot."""
+    global ADMIN_CHAT_ID
+    chat_id = update.effective_chat.id
+    ADMIN_CHAT_ID = str(chat_id)
+    try:
+        STORE.data["admin_chat_id"] = str(chat_id)
+        STORE.save()
+    except Exception:
+        pass
+    await update.message.reply_text(
+        f"✅ ادمین ثبت شد. از این به بعد رسیدها به این چت ارسال می‌شوند.\nAdminChatID: {chat_id}",
+        reply_markup=main_menu_reply()
+    )
+
+async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(f"ChatID شما: {update.effective_chat.id}")
+
+# --- end admin helpers ---
 
 async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -1129,7 +1163,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         # دکمه ویرایش (شروع مجدد Conversation Handler)
         [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")], 
         # دکمه پرداخت (غیرفعال)
-        [InlineKeyboardButton("💳 اقدام به پرداخت نهایی (فعلاً غیرفعال)", callback_data="checkout:pay")], 
+        [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")], 
         # دکمه لغو و منوی اصلی
         [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
@@ -1142,6 +1176,286 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         reply_markup=main_menu_reply(),
     )
 
+
+
+# ------------------ Manual payment / receipt workflow ------------------
+
+def _make_order_id() -> str:
+    return uuid.uuid4().hex[:10]
+
+def _ensure_admin_chat_id() -> Optional[int]:
+    try:
+        return int(ADMIN_CHAT_ID) if ADMIN_CHAT_ID else None
+    except Exception:
+        return None
+
+def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+    """Create (or reuse) an order id for current user's cart+customer."""
+    cart = context.user_data.get("cart", [])
+    customer = context.user_data.get("customer", {})
+    if not cart or not customer:
+        return None
+
+    # reuse if already created in this session
+    existing = context.user_data.get("current_order_id")
+    if existing and STORE.find_order(existing):
+        return existing
+
+    order_id = _make_order_id()
+    order = {
+        "order_id": order_id,
+        "status": "awaiting_receipt",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "total": _calc_cart_total(cart),
+        "items": cart,
+        "customer": customer,
+        "user_chat_id": update.effective_chat.id,
+        "user_id": update.effective_user.id if update.effective_user else None,
+        "username": (update.effective_user.username if update.effective_user else None),
+        "receipt": None,
+    }
+    STORE.add_order(order)
+    context.user_data["current_order_id"] = order_id
+    return order_id
+
+async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    """Send card number (copyable) + request receipt."""
+    total = 0
+    order = STORE.find_order(order_id)
+    if order:
+        total = order.get("total", 0)
+
+    text = (
+        "💳 **پرداخت کارت به کارت**\n\n"
+        f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
+        "🔹 شماره کارت فروشگاه (برای کپی، روی آن بزنید):\n"
+        f"`{CARD_NUMBER}`\n\n"
+        "بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
+    )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
+        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+    ])
+
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        try:
+            await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+
+
+async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    q = update.callback_query
+    await q.answer()
+    order = STORE.find_order(order_id)
+    if not order:
+        await q.edit_message_text("❌ سفارش پیدا نشد.", reply_markup=main_menu())
+        return
+
+    # mark that we are waiting for a photo from this user
+    context.user_data["awaiting_receipt"] = order_id
+
+    text = (
+        "📸 لطفاً *عکس رسید پرداخت* را همینجا ارسال کنید.\n\n"
+        "اگر اشتباهی وارد این مرحله شدید، می‌توانید انصراف دهید."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ انصراف", callback_data="receipt:cancel")],
+    ])
+    try:
+        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+
+
+async def receipt_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    await q.answer()
+    context.user_data.pop("awaiting_receipt", None)
+    await q.edit_message_text("انصراف داده شد. از منو می‌توانید ادامه دهید.", reply_markup=main_menu())
+
+
+async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle user uploading receipt photo."""
+    if not update.message or not update.message.photo:
+        return
+
+    order_id = context.user_data.get("awaiting_receipt")
+    if not order_id:
+        return  # not in receipt flow
+
+    order = STORE.find_order(order_id)
+    if not order:
+        context.user_data.pop("awaiting_receipt", None)
+        await update.message.reply_text("❌ سفارش پیدا نشد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu_reply())
+        return
+
+    # take best quality
+    photo = update.message.photo[-1]
+    file_id = photo.file_id
+
+    # update order
+    STORE.update_order(order_id, status="receipt_submitted", receipt={"file_id": file_id, "submitted_at": datetime.utcnow().isoformat() + "Z"})
+    context.user_data.pop("awaiting_receipt", None)
+
+    await update.message.reply_text(
+        "✅ رسید دریافت شد. پس از بررسی توسط ادمین، نتیجه به شما اطلاع داده می‌شود.",
+        reply_markup=main_menu_reply()
+    )
+
+    admin_id = _ensure_admin_chat_id()
+    if not admin_id:
+        # admin not registered yet
+        await update.message.reply_text(
+            f"⚠️ ادمین هنوز در ربات ثبت نشده است. لطفاً به ادمین ({ADMIN_USERNAME}) اطلاع دهید داخل ربات دستور /admin را بزند.",
+            reply_markup=main_menu_reply()
+        )
+        return
+
+    # build order summary for admin
+    lines = []
+    for i, it in enumerate(order.get("items", []), 1):
+        lines.append(
+            f"{i}) {it['name']} | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
+            f"تعداد: {it['qty']} | {_ftm_toman(it['qty'] * it['price'])}"
+        )
+
+    admin_text = (
+        "🧾 **رسید پرداخت جدید**\n"
+        f"OrderID: `{order_id}`\n"
+        f"UserChatID: `{order.get('user_chat_id')}`\n"
+        f"User: @{order.get('username') or '—'}\n"
+        f"جمع کل: **{_ftm_toman(order.get('total', 0))}**\n\n"
+        "👤 مشتری:\n"
+        f"نام: {order['customer'].get('name')}\n"
+        f"موبایل: {order['customer'].get('phone')}\n"
+        f"آدرس: {order['customer'].get('address')}\n"
+        f"کدپستی: {order['customer'].get('postal')}\n\n"
+        "اقلام:\n" + "\n".join(lines)
+    )
+
+    admin_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ تایید پرداخت", callback_data=f"admin:approve:{order_id}")],
+        [InlineKeyboardButton("❌ مشکل دارد", callback_data=f"admin:reject:{order_id}")],
+    ])
+
+    try:
+        await context.bot.send_photo(
+            chat_id=admin_id,
+            photo=file_id,
+            caption=admin_text,
+            parse_mode="Markdown",
+            reply_markup=admin_kb
+        )
+    except Exception as e:
+        logger.error("Failed to send receipt to admin: %s", e)
+
+
+async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    q = update.callback_query
+    await q.answer()
+
+    admin_id = _ensure_admin_chat_id()
+    if not admin_id or q.message.chat_id != admin_id:
+        await q.answer("دسترسی ندارید.", show_alert=True)
+        return
+
+    order = STORE.find_order(order_id)
+    if not order:
+        await q.edit_message_text("❌ سفارش پیدا نشد.")
+        return
+
+    if order.get("status") == "paid_confirmed":
+        await q.answer("قبلاً تایید شده.", show_alert=False)
+        return
+
+    # decrement inventory once confirmed
+    for it in order.get("items", []):
+        _decrement_inventory(it)
+
+    STORE.update_order(order_id, status="paid_confirmed", confirmed_at=datetime.utcnow().isoformat() + "Z")
+
+    user_chat_id = order.get("user_chat_id")
+    try:
+        await context.bot.send_message(
+            chat_id=int(user_chat_id),
+            text=f"✅ پرداخت شما برای سفارش `{order_id}` تایید شد. سفارش شما در حال پردازش است.",
+            parse_mode="Markdown",
+            reply_markup=main_menu_reply()
+        )
+    except Exception as e:
+        logger.error("Failed to notify user for approve: %s", e)
+
+    await q.edit_message_caption(caption=(q.message.caption or "") + "\n\n✅ *پرداخت تایید شد.*", parse_mode="Markdown", reply_markup=None)
+
+
+async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    q = update.callback_query
+    await q.answer()
+
+    admin_id = _ensure_admin_chat_id()
+    if not admin_id or q.message.chat_id != admin_id:
+        await q.answer("دسترسی ندارید.", show_alert=True)
+        return
+
+    order = STORE.find_order(order_id)
+    if not order:
+        await q.edit_message_text("❌ سفارش پیدا نشد.")
+        return
+
+    # mark pending admin reply in bot_data (shared)
+    context.bot_data["admin_pending_reply"] = {
+        "order_id": order_id,
+        "user_chat_id": order.get("user_chat_id"),
+        "admin_chat_id": admin_id,
+    }
+    await q.edit_message_caption(
+        caption=(q.message.caption or "") + "\n\n❌ *لطفاً دلیل/پیام را تایپ کنید تا برای مشتری ارسال شود.*",
+        parse_mode="Markdown",
+        reply_markup=None
+    )
+
+
+async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin types a message after pressing 'مشکل دارد' to send to user."""
+    if not update.message:
+        return
+    pending = context.bot_data.get("admin_pending_reply")
+    admin_id = _ensure_admin_chat_id()
+    if not pending or not admin_id:
+        return
+    if update.effective_chat.id != admin_id:
+        return
+
+    msg = update.message.text.strip()
+    order_id = pending.get("order_id")
+    user_chat_id = pending.get("user_chat_id")
+    if not (order_id and user_chat_id):
+        context.bot_data.pop("admin_pending_reply", None)
+        return
+
+    # update order status
+    STORE.update_order(order_id, status="receipt_rejected", rejected_at=datetime.utcnow().isoformat() + "Z", reject_message=msg)
+
+    try:
+        await context.bot.send_message(
+            chat_id=int(user_chat_id),
+            text=f"❌ رسید پرداخت برای سفارش `{order_id}` تایید نشد.\n\nپیام ادمین: {msg}",
+            parse_mode="Markdown",
+            reply_markup=main_menu_reply()
+        )
+    except Exception as e:
+        logger.error("Failed to send reject message to user: %s", e)
+
+    await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
+    context.bot_data.pop("admin_pending_reply", None)
+
+# ------------------ end manual payment / receipt workflow ------------------
 
 #      payment_provider
 class DummyProvider:
@@ -1213,15 +1527,17 @@ CALLBACK_URL = os.getenv("CALLBACK_URL", "").strip() or None
 
 
 #      check out: pay/verify
+
 async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    # ⭐️ (اصلاح) پیام غیرفعال بودن پرداخت طبق درخواست کاربر ⭐️
-    await q.answer("❌ درگاه پرداخت فعلاً فعال نیست. لطفا برای ثبت نهایی با پشتیبانی تماس بگیرید.", show_alert=True)
-    return # توقف در همین مرحله طبق درخواست کاربر
+    await q.answer()
 
-    # cart = context.user_data.get("cart" , [])
-    # customer = context.user_data.get("customer", {})
-    # ... (بقیه منطق پرداخت) ...
+    order_id = _create_order_from_current_cart(update, context)
+    if not order_id:
+        await q.edit_message_text("❌ سبد خرید یا مشخصات مشتری کامل نیست. لطفاً دوباره تلاش کنید.", reply_markup=main_menu())
+        return
+
+    await manual_payment_instructions(update, context, order_id)
 
 
 async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
@@ -1320,7 +1636,31 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data == "menu:support":
         await q.edit_message_text(" پشتیبانی: @amirmehdi_84_10", reply_markup=main_menu()) ; return
         
-    # **[تغییر]** شروع بخش هندلرهای سبد خرید
+    
+
+    # ---- manual payment / receipt callbacks ----
+    if data.startswith("receipt:start:"):
+        _, _, order_id = data.split(":", 2)
+        await receipt_start(update, context, order_id)
+        return
+
+    if data == "receipt:cancel":
+        await receipt_cancel(update, context)
+        return
+
+    if data.startswith("admin:approve:"):
+        _, _, order_id = data.split(":", 2)
+        await admin_approve(update, context, order_id)
+        return
+
+    if data.startswith("admin:reject:"):
+        _, _, order_id = data.split(":", 2)
+        await admin_reject_start(update, context, order_id)
+        return
+    # ---- end manual payment / receipt callbacks ----
+
+
+# **[تغییر]** شروع بخش هندلرهای سبد خرید
     # ------------------ مدیریت سبد خرید ------------------
     cart: List[Dict] = context.user_data.get("cart" , [])
     
@@ -1609,6 +1949,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 # ساخت اپلیکیشن PTB
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("admin", admin_register))
+application.add_handler(CommandHandler("myid", my_id))
 
 # Conversation Handler برای فرم مشتری
 conv_handler = ConversationHandler(
@@ -1628,6 +1970,12 @@ application.add_handler(conv_handler)
 
 # هندلرهای اصلی (بعد از Conversation Handler)
 application.add_handler(CallbackQueryHandler(menu_router))
+
+# Receipt photo handler (user uploads)
+application.add_handler(MessageHandler(filters.PHOTO, on_receipt_photo))
+
+# Admin text reply handler (when admin writes a reason for rejection)
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_text_reply))
 
 # هندلر برای Reply Keyboard (منوهای پایین صفحه)
 menu_reply_handler = MessageHandler(
