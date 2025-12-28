@@ -249,7 +249,8 @@ def main_menu_reply() -> ReplyKeyboardMarkup:
     """ساخت کیبورد Reply برای منو اصلی (پایین صفحه)"""
     keyboard = [
         ["🛍️ لیست محصولات", "🧺 سبد خرید"] , 
-        ["🆘 پشتیبانی"],
+        ["📦 وضعیت سفارش من"],
+        ["🆘 پشتیبانی"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -387,6 +388,15 @@ def _unit_price_and_sizes(p:Dict , color:Optional[str]) -> Tuple[int , Dict[str,
     if "price" in p and "sizes" in p:
         return p["price"] , p["sizes"]
     return 0 , {}
+
+
+def _order_log(order_id: str, by: str, text: str):
+    order = STORE.find_order(order_id)
+    if not order:
+        return
+    hist = order.get("history", [])
+    hist.append({"at": datetime.utcnow().isoformat() + "Z", "by": by, "text": text})
+    STORE.update_order(order_id, history=hist)
 
 
 def _photo_for_selection(p:Dict , color:Optional[str]) -> Optional[str]:
@@ -977,6 +987,41 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     return
 
 
+async def show_my_order_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    orders = STORE.data.get("orders", [])
+
+    mine = [o for o in orders if int(o.get("user_chat_id", 0)) == int(chat_id)]
+    if not mine:
+        await update.message.reply_text("هنوز سفارشی برای شما ثبت نشده است.", reply_markup=main_menu_reply())
+        return
+
+    # آخرین سفارش
+    o = sorted(mine, key=lambda x: x.get("created_at", ""), reverse=True)[0]
+    order_id = o.get("order_id")
+    status = o.get("status")
+    ship = o.get("shipping_status", "pending")
+    track = o.get("tracking_code") or "—"
+
+    text = (
+        f"📦 وضعیت آخرین سفارش شما:\n\n"
+        f"🧾 شماره سفارش: {order_id}\n"
+        f"💳 وضعیت پرداخت: {status}\n"
+        f"🚚 وضعیت ارسال: {ship}\n"
+        f"🔎 کد رهگیری: {track}\n"
+    )
+
+    # آخرین 3 رویداد
+    hist = o.get("history", [])[-3:]
+    if hist:
+        text += "\nآخرین تغییرات:\n"
+        for h in hist:
+            text += f"- {h.get('text')} ({h.get('at')})\n"
+
+    await update.message.reply_text(text, reply_markup=main_menu_reply())
+
+
+
 async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     روتر برای مدیریت پیام‌های متنی دریافتی از دکمه‌های Reply Keyboard (پایین صفحه).
@@ -993,6 +1038,9 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         
     elif text == "🆘 پشتیبانی":
         await update.message.reply_text("برای پشتیبانی با @amirmehdi_84_10 تماس بگیرید.")
+    
+    elif text == "📦 وضعیت سفارش من":
+        await show_my_order_status(update, context)
 
 
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1209,6 +1257,9 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
         "total": _calc_cart_total(cart),
         "items": cart,
         "customer": customer,
+        "shipping_status": "pending",
+        "tracking_code": None,
+        "history": [{"at": datetime.utcnow().isoformat() + "Z", "by": "system", "text": "سفارش ساخته شد و در انتظار رسید است."}],
         "user_chat_id": update.effective_chat.id,
         "user_id": update.effective_user.id if update.effective_user else None,
         "username": (update.effective_user.username if update.effective_user else None),
@@ -1384,6 +1435,20 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
         _decrement_inventory(it)
 
     STORE.update_order(order_id, status="paid_confirmed", confirmed_at=datetime.utcnow().isoformat() + "Z")
+    _order_log(order_id, "admin", "پرداخت تایید شد. سفارش وارد مرحله پردازش شد.")
+
+    admin_panel = InlineKeyboardMarkup([
+    [InlineKeyboardButton("📦 بسته‌بندی شد", callback_data=f"ship:packed:{order_id}")],
+    [InlineKeyboardButton("🚚 تحویل پست شد + کد رهگیری", callback_data=f"ship:need_track:{order_id}")],
+    [InlineKeyboardButton("✉️ پیام به مشتری", callback_data=f"admin:msg:{order_id}")]
+])
+    await context.bot.send_message(
+    chat_id=update.effective_chat.id,  # چون الان ادمین همینجا کلیک کرده
+    text=f"🛠 کنترل سفارش `{order_id}`",
+    parse_mode="Markdown",
+    reply_markup=admin_panel
+)
+
 
     user_chat_id = order.get("user_chat_id")
     try:
@@ -1430,6 +1495,46 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Admin types a message after pressing 'مشکل دارد' to send to user."""
     if not update.message:
         return
+    
+    pending_track = context.bot_data.get("admin_pending_tracking")
+    if pending_track and update.effective_chat.id == admin_id:
+        order_id = pending_track["order_id"]
+        order = STORE.find_order(order_id)
+        if order:
+            track = update.message.text.strip()
+            STORE.update_order(order_id, shipping_status="shipped", tracking_code=track)
+            _order_log(order_id, "admin", f"تحویل پست شد. کد رهگیری: {track}")
+
+            await context.bot.send_message(
+                chat_id=int(order["user_chat_id"]),
+                text=(f"🚚 سفارش `{order_id}` تحویل پست شد.\n"
+                    f"🔎 کد رهگیری: `{track}`"),
+                parse_mode="Markdown",
+                reply_markup=main_menu_reply()
+            )
+            await update.message.reply_text("✅ کد رهگیری برای مشتری ارسال شد.")
+        context.bot_data.pop("admin_pending_tracking", None)
+        return
+
+
+    pending_msg = context.bot_data.get("admin_pending_msg")
+    if pending_msg and update.effective_chat.id == admin_id:
+        order_id = pending_msg["order_id"]
+        order = STORE.find_order(order_id)
+        if order:
+            msg = update.message.text.strip()
+            _order_log(order_id, "admin", f"پیام ادمین به مشتری: {msg}")
+
+            await context.bot.send_message(
+                chat_id=int(order["user_chat_id"]),
+                text=f"✉️ پیام پشتیبانی درباره سفارش `{order_id}`:\n\n{msg}",
+                parse_mode="Markdown",
+                reply_markup=main_menu_reply()
+            )
+            await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
+        context.bot_data.pop("admin_pending_msg", None)
+        return
+
     pending = context.bot_data.get("admin_pending_reply")
     admin_id = _ensure_admin_chat_id()
     if not pending or not admin_id:
@@ -1769,7 +1874,35 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             "price": p["price"],
         }
         await show_qty_picker(update, context, size) ; return
-        
+
+
+    if data.startswith("ship:packed:"):
+        _, _, order_id = data.split(":", 2)
+        order = STORE.find_order(order_id)
+        if not order:
+            await q.answer("سفارش پیدا نشد", show_alert=True); return
+
+        STORE.update_order(order_id, shipping_status="packed")
+        _order_log(order_id, "admin", "بسته‌بندی شد.")
+        await context.bot.send_message(chat_id=int(order["user_chat_id"]),
+                                    text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
+                                    parse_mode="Markdown",
+                                    reply_markup=main_menu_reply())
+        await q.answer("ثبت شد ✅")
+        return
+    
+    if data.startswith("ship:need_track:"):
+        _, _, order_id = data.split(":", 2)
+        context.bot_data["admin_pending_tracking"] = {"order_id": order_id}
+        await q.edit_message_text("🔎 لطفاً کد رهگیری پست را تایپ کنید:")
+        return
+    
+    if data.startswith("admin:msg:"):
+        _, _, order_id = data.split(":", 2)
+        context.bot_data["admin_pending_msg"] = {"order_id": order_id}
+        await q.edit_message_text("✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:")
+        return
+    
     
     if data.startswith("catalog:choose:"):
         parts = data.split(":", 6)
