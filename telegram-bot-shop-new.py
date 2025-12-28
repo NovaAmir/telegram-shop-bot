@@ -292,6 +292,14 @@ def category_keyboard(gender : str) -> InlineKeyboardMarkup:
     ])
     return InlineKeyboardMarkup(rows)
 
+def admin_panel_keyboard(order_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 بسته‌بندی شد", callback_data=f"ship:packed:{order_id}")],
+        [InlineKeyboardButton("🚚 تحویل پست شد + کد رهگیری", callback_data=f"ship:need_track:{order_id}")],
+        [InlineKeyboardButton("✉️ پیام به مشتری", callback_data=f"admin:msg:{order_id}")],
+    ])
+
+
 
 def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
     product = _find_product(gender, category, product_id)
@@ -1437,17 +1445,14 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
     STORE.update_order(order_id, status="paid_confirmed", confirmed_at=datetime.utcnow().isoformat() + "Z")
     _order_log(order_id, "admin", "پرداخت تایید شد. سفارش وارد مرحله پردازش شد.")
 
-    admin_panel = InlineKeyboardMarkup([
-    [InlineKeyboardButton("📦 بسته‌بندی شد", callback_data=f"ship:packed:{order_id}")],
-    [InlineKeyboardButton("🚚 تحویل پست شد + کد رهگیری", callback_data=f"ship:need_track:{order_id}")],
-    [InlineKeyboardButton("✉️ پیام به مشتری", callback_data=f"admin:msg:{order_id}")]
-])
+    admin_panel = admin_panel_keyboard(order_id)
     await context.bot.send_message(
-    chat_id=update.effective_chat.id,  # چون الان ادمین همینجا کلیک کرده
-    text=f"🛠 کنترل سفارش `{order_id}`",
-    parse_mode="Markdown",
-    reply_markup=admin_panel
-)
+        chat_id=update.effective_chat.id,
+        text=f"🛠 کنترل سفارش `{order_id}`",
+        parse_mode="Markdown",
+        reply_markup=admin_panel
+    )
+
 
 
     user_chat_id = order.get("user_chat_id")
@@ -1492,6 +1497,12 @@ async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    admin_id = _ensure_admin_chat_id()
+    if not admin_id:
+        return
+    if update.effective_chat.id != admin_id:
+        return
+
     """Admin types a message after pressing 'مشکل دارد' to send to user."""
     if not update.message:
         return
@@ -1506,12 +1517,12 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             _order_log(order_id, "admin", f"تحویل پست شد. کد رهگیری: {track}")
 
             await context.bot.send_message(
-                chat_id=int(order["user_chat_id"]),
-                text=(f"🚚 سفارش `{order_id}` تحویل پست شد.\n"
-                    f"🔎 کد رهگیری: `{track}`"),
+                chat_id=update.effective_chat.id,
+                text=f"🛠 کنترل سفارش `{order_id}`",
                 parse_mode="Markdown",
-                reply_markup=main_menu_reply()
+                reply_markup=admin_panel_keyboard(order_id)
             )
+
             await update.message.reply_text("✅ کد رهگیری برای مشتری ارسال شد.")
         context.bot_data.pop("admin_pending_tracking", None)
         return
@@ -1526,11 +1537,12 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             _order_log(order_id, "admin", f"پیام ادمین به مشتری: {msg}")
 
             await context.bot.send_message(
-                chat_id=int(order["user_chat_id"]),
-                text=f"✉️ پیام پشتیبانی درباره سفارش `{order_id}`:\n\n{msg}",
+                chat_id=update.effective_chat.id,
+                text=f"🛠 کنترل سفارش `{order_id}`",
                 parse_mode="Markdown",
-                reply_markup=main_menu_reply()
+                reply_markup=admin_panel_keyboard(order_id)
             )
+
             await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
         context.bot_data.pop("admin_pending_msg", None)
         return
@@ -1894,14 +1906,25 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data.startswith("ship:need_track:"):
         _, _, order_id = data.split(":", 2)
         context.bot_data["admin_pending_tracking"] = {"order_id": order_id}
-        await q.edit_message_text("🔎 لطفاً کد رهگیری پست را تایپ کنید:")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🔎 لطفاً کد رهگیری پست را تایپ کنید:"
+        )
+        await q.answer("منتظر کد رهگیری…", show_alert=False)
         return
+
     
     if data.startswith("admin:msg:"):
         _, _, order_id = data.split(":", 2)
         context.bot_data["admin_pending_msg"] = {"order_id": order_id}
-        await q.edit_message_text("✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:"
+        )
+
+        await q.answer("منتظر پیام…", show_alert=False)
         return
+
     
     
     if data.startswith("catalog:choose:"):
