@@ -1892,16 +1892,34 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         _, _, order_id = data.split(":", 2)
         order = STORE.find_order(order_id)
         if not order:
-            await q.answer("سفارش پیدا نشد", show_alert=True); return
+            await q.answer("سفارش پیدا نشد", show_alert=True)
+            return
 
         STORE.update_order(order_id, shipping_status="packed")
         _order_log(order_id, "admin", "بسته‌بندی شد.")
-        await context.bot.send_message(chat_id=int(order["user_chat_id"]),
-                                    text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
-                                    parse_mode="Markdown",
-                                    reply_markup=main_menu_reply())
+
+    # پیام به مشتری
+        await context.bot.send_message(
+            chat_id=int(order["user_chat_id"]),
+            text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
+            parse_mode="Markdown",
+            reply_markup=main_menu_reply()
+        )
+
+    # ✅ پیام به ادمین
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                f"✅ انجام شد.\n"
+                f"سفارش `{order_id}` «بسته‌بندی شد» و پیام برای مشتری ارسال شد."
+            ),
+            parse_mode="Markdown",
+            reply_markup=admin_panel_keyboard(order_id)
+        )
+
         await q.answer("ثبت شد ✅")
         return
+
     
     if data.startswith("ship:need_track:"):
         _, _, order_id = data.split(":", 2)
