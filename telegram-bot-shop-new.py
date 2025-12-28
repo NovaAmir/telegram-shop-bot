@@ -374,6 +374,9 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
             return p 
     return None
 
+def format_card_number(card_number: str) -> str:
+    return " ".join(card_number[i:i+4] for i in range(0, len(card_number), 4))
+
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
     if not isinstance(p , dict):
@@ -1228,7 +1231,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     # ✅ بازگرداندن منوی اصلی (Reply Keyboard) بعد از اتمام فرم
     await context.bot.send_message(
         chat_id=chat_id,
-        text="✅ فرم تکمیل شد. از منوی پایین می‌تونی ادامه بدی.",
+        text="✅فرم مشخصات تکمیل شد.",
         reply_markup=main_menu_reply(),
     )
 
@@ -1286,7 +1289,7 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     
     cards_text = ""
     for i, card in enumerate(CARDS, start=1):
-        cards_text += (f"{i}) 👤 به نام: *{card['holder']}*\n"f"`{card['number']}`\n\n")
+        cards_text += (f"{i}) 💳 `{format_card_number(card['number'])}`\n"f"👤 ({card['holder']})\n\n")
 
     text = (
     "💳 **پرداخت کارت به کارت**\n\n"
@@ -1529,23 +1532,44 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
     pending_msg = context.bot_data.get("admin_pending_msg")
-    if pending_msg and update.effective_chat.id == admin_id:
+    if pending_msg:
         order_id = pending_msg["order_id"]
         order = STORE.find_order(order_id)
-        if order:
-            msg = update.message.text.strip()
-            _order_log(order_id, "admin", f"پیام ادمین به مشتری: {msg}")
 
+        if not order:
+            await update.message.reply_text("❌ سفارش پیدا نشد.")
+            context.bot_data.pop("admin_pending_msg", None)
+            return
+
+        msg = update.message.text.strip()
+        _order_log(order_id, "admin", f"پیام ادمین به مشتری: {msg}")
+
+    # ✅ ارسال پیام واقعی به مشتری
+        try:
             await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"🛠 کنترل سفارش `{order_id}`",
+                chat_id=int(order["user_chat_id"]),
+                text=f"✉️ پیام پشتیبانی درباره سفارش `{order_id}`:\n\n{msg}",
                 parse_mode="Markdown",
-                reply_markup=admin_panel_keyboard(order_id)
+                reply_markup=main_menu_reply()
             )
+        except Exception as e:
+            logger.error("Failed to send admin message to user: %s", e)
+            await update.message.reply_text("❌ ارسال پیام به مشتری ناموفق بود (خطای تلگرام).")
+            context.bot_data.pop("admin_pending_msg", None)
+            return
 
-            await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
+    # ✅ تأیید به ادمین + نگه داشتن پنل
+        await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🛠 کنترل سفارش `{order_id}`",
+            parse_mode="Markdown",
+            reply_markup=admin_panel_keyboard(order_id)
+        )
+
         context.bot_data.pop("admin_pending_msg", None)
         return
+
 
     pending = context.bot_data.get("admin_pending_reply")
     admin_id = _ensure_admin_chat_id()
