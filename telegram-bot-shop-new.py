@@ -1448,12 +1448,21 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     STORE.update_order(order_id, status="receipt_rejected", rejected_at=datetime.utcnow().isoformat() + "Z", reject_message=msg)
 
     try:
+        kb = InlineKeyboardMarkup([
+    [InlineKeyboardButton("📸 ارسال مجدد رسید", callback_data=f"receipt:start:{order_id}")],
+    [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+])
+
         await context.bot.send_message(
-            chat_id=int(user_chat_id),
-            text=f"❌ رسید پرداخت برای سفارش `{order_id}` تایید نشد.\n\nپیام ادمین: {msg}",
-            parse_mode="Markdown",
-            reply_markup=main_menu_reply()
-        )
+    chat_id=int(user_chat_id),
+    text=(
+        f"❌ رسید پرداخت برای سفارش `{order_id}` تایید نشد.\n\n"
+        f"پیام ادمین: {msg}\n\n"
+        "لطفاً روی «ارسال مجدد رسید» بزن و دوباره عکس رسید را ارسال کن."
+    ),
+    parse_mode="Markdown",
+    reply_markup=kb
+)
     except Exception as e:
         logger.error("Failed to send reject message to user: %s", e)
 
@@ -2043,6 +2052,7 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
+
 
 
 
