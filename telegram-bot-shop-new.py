@@ -26,7 +26,8 @@ if not BOT_TOKEN :
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
 # Manual card payment settings
-CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277"} , {"holder":"امیرمهدی پیری" , "number": "5859831211429799"}]
+CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277" , "logo":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766990418/mellat_jbrdq8.webp"} ,
+          {"holder":"امیرمهدی پیری" , "number": "5859831211429799" , "logo":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766990433/tegarat_bv4gdk.webp"}]
 ADMIN_USERNAME = "@Amirmehdi_84_11"
 
 
@@ -375,7 +376,9 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
     return None
 
 def format_card_number(card_number: str) -> str:
-    return " ".join(card_number[i:i+4] for i in range(0, len(card_number), 4))
+    s = "".join(ch for ch in str(card_number) if ch.isdigit())
+    return " ".join(s[i:i+4] for i in range(0, len(s), 4))
+
 
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
@@ -1281,39 +1284,54 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
     return order_id
 
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
-    """Send card number (copyable) + request receipt."""
-    total = 0
+    """Send bank-card options (each with its own logo) + request receipt."""
+    if update.callback_query:
+        await update.callback_query.answer()
+
     order = STORE.find_order(order_id)
-    if order:
-        total = order.get("total", 0)
-    
-    cards_text = ""
+    total = order.get("total", 0) if order else 0
+
+    # 1) Send each card as a separate photo with its own bank logo (like the sample screenshot)
     for i, card in enumerate(CARDS, start=1):
-        cards_text += (f"{i}) 💳 `{format_card_number(card['number'])}`\n"f"👤 ({card['holder']})\n\n")
+        caption = (
+            f"💳 کارت {i}\n"
+            f"👤 ({card['holder']})\n"
+            f"`{format_card_number(card['number'])}`\n\n"
+            "برای کپی، روی شماره بزنید."
+        )
+        try:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=card.get("logo"),
+                caption=caption,
+                parse_mode="Markdown",
+            )
+        except Exception:
+            # Fallback if photo URL is invalid/unreachable
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=caption,
+                parse_mode="Markdown",
+            )
 
-    text = (
-    "💳 **پرداخت کارت به کارت**\n\n"
-    f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
-    "🔹 اطلاعات حساب‌های فروشگاه (برای کپی، روی شماره بزنید):\n\n"
-    f"{cards_text}"
-    "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
-)
-
-
+    # 2) Send a final message that only contains the action buttons (upload receipt)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
     ])
 
-    if update.callback_query:
-        q = update.callback_query
-        await q.answer()
-        try:
-            await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-        except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
-    else:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+    text = (
+        "💳 **پرداخت کارت به کارت**\n\n"
+        f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
+        "✅ پس از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
+    )
+
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=text,
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
 
 
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
@@ -1495,7 +1513,7 @@ async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await q.edit_message_caption(
         caption=(q.message.caption or "") + "\n\n❌ *لطفاً دلیل/پیام را تایپ کنید تا برای مشتری ارسال شود.*",
         parse_mode="Markdown",
-        reply_markup=None
+        reply_markup=q.message.reply_markup
     )
 
 
@@ -1511,22 +1529,50 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     
     pending_track = context.bot_data.get("admin_pending_tracking")
-    if pending_track and update.effective_chat.id == admin_id:
+    if pending_track:
         order_id = pending_track["order_id"]
         order = STORE.find_order(order_id)
-        if order:
-            track = update.message.text.strip()
-            STORE.update_order(order_id, shipping_status="shipped", tracking_code=track)
-            _order_log(order_id, "admin", f"تحویل پست شد. کد رهگیری: {track}")
 
+        if not order:
+            await update.message.reply_text("❌ سفارش پیدا نشد.")
+            context.bot_data.pop("admin_pending_tracking", None)
+            return
+
+        track = update.message.text.strip()
+
+        # ذخیره وضعیت ارسال
+        STORE.update_order(order_id, shipping_status="shipped", tracking_code=track)
+        _order_log(order_id, "admin", f"تحویل پست شد. کد رهگیری: {track}")
+
+        # ✅ ارسال پیام به مشتری (بدون Markdown برای جلوگیری از خطا)
+        try:
             await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"🛠 کنترل سفارش `{order_id}`",
-                parse_mode="Markdown",
-                reply_markup=admin_panel_keyboard(order_id)
-            )
+                chat_id=int(order["user_chat_id"]),
+                text=(
+                    "🚚 سفارش شما ارسال شد."
 
-            await update.message.reply_text("✅ کد رهگیری برای مشتری ارسال شد.")
+
+                    f"🧾 شماره سفارش: {order_id}"
+
+                    f"🔎 کد رهگیری: {track}"
+                ),
+                reply_markup=main_menu_reply()
+            )
+        except Exception as e:
+            logger.error("Failed to send tracking to user: %s", e)
+            await update.message.reply_text("❌ ارسال کد رهگیری به مشتری ناموفق بود.")
+            context.bot_data.pop("admin_pending_tracking", None)
+            return
+
+        # ✅ پیام تایید به ادمین + نگه داشتن پنل
+        await update.message.reply_text("✅ کد رهگیری برای مشتری ارسال شد.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🛠 کنترل سفارش `{order_id}`",
+            parse_mode="Markdown",
+            reply_markup=admin_panel_keyboard(order_id)
+        )
+
         context.bot_data.pop("admin_pending_tracking", None)
         return
 
@@ -1548,8 +1594,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         try:
             await context.bot.send_message(
                 chat_id=int(order["user_chat_id"]),
-                text=f"✉️ پیام پشتیبانی درباره سفارش `{order_id}`:\n\n{msg}",
-                parse_mode="Markdown",
+                text=f"✉️ پیام پشتیبانی درباره سفارش {order_id}:{msg}",
                 reply_markup=main_menu_reply()
             )
         except Exception as e:
