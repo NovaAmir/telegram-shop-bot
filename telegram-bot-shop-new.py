@@ -12,6 +12,7 @@ import requests
 import asyncio
 import threading
 from flask import Flask, request
+import jdatetime
 
 
 CUSTOMER_NAME, CUSTOMER_PHONE, CUSTOMER_ADDRESS, CUSTOMER_POSTAL = range(4)
@@ -1239,8 +1240,19 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
 
 # ------------------ Manual payment / receipt workflow ------------------
 
+
 def _make_order_id() -> str:
-    return uuid.uuid4().hex[:10]
+    today = jdatetime.date.today().strftime("%Y%m%d")
+
+    seq_map = STORE.data.get("order_seq", {})
+    last_seq = int(seq_map.get(today, 0))
+    new_seq = last_seq + 1
+    seq_map[today] = new_seq
+    STORE.data["order_seq"] = seq_map
+    STORE.save()
+
+    return f"ORD-{today}-{new_seq:03d}"
+
 
 def _ensure_admin_chat_id() -> Optional[int]:
     try:
@@ -1573,7 +1585,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         try:
             await context.bot.send_message(
                 chat_id=int(order["user_chat_id"]),
-                text=f"✉️ پیام پشتیبانی درباره سفارش {order_id}:{msg}",
+                text=f"✉️ پیام پشتیبانی درباره سفارش {order_id}:\n{msg}",
                 reply_markup=main_menu_reply()
             )
         except Exception as e:
