@@ -1892,6 +1892,26 @@ async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, or
         except Exception as e:
             logger.error("Failed to notify admin: %s", e)
         
+async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = "🏠 منوی اصلی\nاز گزینه‌های زیر انتخاب کنید:"
+
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        # پیام فعلی (Inline) را تبدیل به منو کن
+        try:
+            await q.edit_message_text(text, reply_markup=main_menu())
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=main_menu())
+
+        # اگر می‌خوای کیبورد پایین صفحه (ReplyKeyboard) هم حتماً دیده بشه:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⬇️ از منوی پایین هم می‌تونی استفاده کنی.",
+            reply_markup=main_menu_reply()
+        )
+    else:
+        await update.message.reply_text(text, reply_markup=main_menu_reply())
 
 #      روتر کلی دکمه ها 
 async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None :
@@ -1903,7 +1923,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
 
     if data == "menu:back_home":
-        await start(update, context)
+        await show_home_menu(update, context)
         return
         
     if data == "menu:products":
