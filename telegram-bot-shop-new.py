@@ -1332,10 +1332,15 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
     if not cart or not customer:
         return None
 
-    # reuse if already created in this session
     existing = context.user_data.get("current_order_id")
     if existing and STORE.find_order(existing):
+        # sync shipping method/customer with latest user_data
+        order = STORE.find_order(existing)
+        cust = dict(order.get("customer", {}))
+        cust.update(customer)  # customer جدید user_data
+        STORE.update_order(existing, customer=cust, shipping_method=cust.get("shipping_method"))
         return existing
+
 
     order_id = _make_order_id()
     order = {
@@ -1930,6 +1935,14 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             await q.answer("روش ارسال نامعتبر است.", show_alert=True)
             return
         context.user_data.setdefault("customer", {})["shipping_method"] = method
+        # ✅ اگر سفارش قبلاً ساخته شده، روش ارسال داخل ORDER هم آپدیت شود
+        existing = context.user_data.get("current_order_id")
+        if existing and STORE.find_order(existing):
+            order = STORE.find_order(existing)
+            new_customer = dict(order.get("customer", {}))
+            new_customer["shipping_method"] = method
+            STORE.update_order(existing, shipping_method=method, customer=new_customer)
+
         text = _build_checkout_summary_text(context)
         # برگشت به خلاصه سفارش با کیبورد اصلی همان مرحله
         kb = InlineKeyboardMarkup([
