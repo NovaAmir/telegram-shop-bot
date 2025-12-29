@@ -314,7 +314,7 @@ SHIPPING_METHODS = {
 SHIPPING_INFO = {
     "post": "📮 پست: هزینه ارسال بر عهده مشتری است (پس‌کرایه/پرداخت هنگام تحویل یا طبق فاکتور پست).",
     "tipax": "🚚 تیپاکس: هزینه ارسال بر عهده مشتری است و هنگام ارسال/تحویل محاسبه و دریافت می‌شود.",
-    "bike": "🛵 پیک درون‌شهری: هزینه ارسال بر عهده مشتری است و قبل از ارسال هماهنگ می‌شود.",
+    "courier": "🛵 پیک درون‌شهری: هزینه ارسال بر عهده مشتری است و قبل از ارسال هماهنگ می‌شود.",
 }
 
 
@@ -1262,10 +1262,6 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         reply_markup=main_menu_reply(),
     )
 
-    shipping_method = context.user_data.get("shipping_method")
-    shipping_note = SHIPPING_INFO.get(shipping_method, "—")
-    text += f"\n\n🚚 روش ارسال: {shipping_method or 'انتخاب نشده'}\n{shipping_note}"
-
 
 
 
@@ -1373,16 +1369,17 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     for i, card in enumerate(CARDS, start=1):
         cards_text += (f"{i}) 💳 `{format_card_number(card['number'])}`\n"f"👤 ({card['holder']})\n\n")
     
-    shipping_method = order.get("shipping_method") or context.user_data.get("shipping_method")
+    shipping_method = (order.get("shipping_method") or order.get("customer", {}).get("shipping_method"))
     shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
 
+    ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
     text = (
     "💳 **پرداخت کارت به کارت**\n\n"
     f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n"
-    f"🚚 روش ارسال: **{SHIPPING_METHODS.get(order.get('shipping_method') or (order.get('customer',{}).get('shipping_method')), {}).get('label', 'انتخاب نشده')}**\n\n"
+    f"🚚 روش ارسال: **{ship_label}**\n"
+    f"{shipping_note}\n\n"
     "🔹 اطلاعات حساب‌های فروشگاه (برای کپی، روی شماره بزنید):\n\n"
     f"{cards_text}\n"
-    f"\n🚚 روش ارسال: {shipping_method}\n{shipping_note}\n"
     "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
 )
 
@@ -2284,12 +2281,26 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
 
     if data == "flow:cancel":
-        # هنگام انصراف از فرم، به سبد خرید برمی‌گردد
-        context.user_data.pop("pending" , None)
+        """
+        انصراف از جریان انتخاب محصول (سایز/تعداد) — باید کاربر را به مرحله مرور محصولات برگرداند،
+        نه این‌که وارد مسیر ثبت سفارش شود.
+        """
+        pend = context.user_data.get("pending") or {}
+        gender = pend.get("gender")
+        category = pend.get("category")
+
+        # پاکسازی وضعیت انتخاب فعلی
+        context.user_data.pop("pending", None)
         context.user_data['awaiting'] = None
-        await show_cart(update, context) # نمایش سبد خرید
+
+        # اگر در حال انتخاب محصول بود، به لیست همان دسته برگرد
+        if gender and category:
+            await show_products(update, context, gender, category)
+        else:
+            # در غیر این صورت (مثلاً از جای دیگر)، سبد خرید را نشان بده
+            await show_cart(update, context)
         return
-    
+
 
     # checkout:begin توسط ConversationHandler در entry_points مدیریت می‌شود.
     # اگر این کد اجرا شود، یعنی ConversationHandler موفق به آغاز نشده است.
