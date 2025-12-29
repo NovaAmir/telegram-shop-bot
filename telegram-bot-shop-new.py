@@ -302,6 +302,31 @@ def admin_panel_keyboard(order_id: str) -> InlineKeyboardMarkup:
 
 
 
+
+# ------------------ Shipping methods ------------------
+# روش‌های ارسال (فعلاً هزینه ثابت/صفر؛ بعداً می‌توانید برای هر روش مبلغ تعیین کنید)
+SHIPPING_METHODS = {
+    "post": {"label": "📮 پست"},
+    "tipax": {"label": "🚚 تیپاکس"},
+    "courier": {"label": "🛵 پیک (درون‌شهری)"},
+}
+
+SHIPPING_INFO = {
+    "post": "📮 پست: هزینه ارسال بر عهده مشتری است (پس‌کرایه/پرداخت هنگام تحویل یا طبق فاکتور پست).",
+    "tipax": "🚚 تیپاکس: هزینه ارسال بر عهده مشتری است و هنگام ارسال/تحویل محاسبه و دریافت می‌شود.",
+    "bike": "🛵 پیک درون‌شهری: هزینه ارسال بر عهده مشتری است و قبل از ارسال هماهنگ می‌شود.",
+}
+
+
+def shipping_methods_keyboard(selected: str | None = None) -> InlineKeyboardMarkup:
+    rows = []
+    for key, info in SHIPPING_METHODS.items():
+        prefix = "✅ " if selected == key else ""
+        rows.append([InlineKeyboardButton(f"{prefix}{info['label']}", callback_data=f"shipmethod:set:{key}")])
+    rows.append([InlineKeyboardButton("⬅️ بازگشت به خلاصه سفارش", callback_data="shipmethod:back")])
+    return InlineKeyboardMarkup(rows)
+# ------------------ end shipping methods ------------------
+
 def colors_keyboard(gender:str, category:str, product_id:str) -> InlineKeyboardMarkup:
     product = _find_product(gender, category, product_id)
     assert product and "variants" in product
@@ -1207,7 +1232,8 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         "👤 **نام و نام خانوادگی**: `{name}`\n"
         "📞 **شماره موبایل**: `{phone}`\n"
         "🏠 **آدرس**: `{address}`\n"
-        "📮 **کد پستی**: `{postal}`\n\n"
+        "📮 **کد پستی**: `{postal}`\n"
+        "🚚 **روش ارسال**: `{ship}`\n\n"
         "🛍️ **محصولات سفارش داده شده**:\n"
         f"{joined_lines}\n\n"
         f"💰 **مبلغ قابل پرداخت**: **{_ftm_toman(total)}**"
@@ -1215,19 +1241,19 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         name=customer.get('name', '—'),
         phone=customer.get('phone', '—'),
         address=customer.get('address', '—'),
-        postal=customer.get('postal', '—')
+        postal=customer.get('postal', '—'),
+        ship=(SHIPPING_METHODS.get(customer.get('shipping_method'), {}).get('label') if customer.get('shipping_method') else 'انتخاب نشده')
     )
     
     # 🟢 دکمه‌های مورد درخواست کاربر
     kb = InlineKeyboardMarkup([
-        # دکمه ویرایش (شروع مجدد Conversation Handler)
-        [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")], 
-        # دکمه پرداخت (غیرفعال)
-        [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")], 
-        # دکمه لغو و منوی اصلی
-        [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
-        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
-    ])
+    [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
+    [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
+    [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
+    [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
+    [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+])
+
     await send(chat_id=chat_id, text=info, reply_markup=kb, parse_mode="Markdown")
     # ✅ بازگرداندن منوی اصلی (Reply Keyboard) بعد از اتمام فرم
     await context.bot.send_message(
@@ -1236,6 +1262,49 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
         reply_markup=main_menu_reply(),
     )
 
+    shipping_method = context.user_data.get("shipping_method")
+    shipping_note = SHIPPING_INFO.get(shipping_method, "—")
+    text += f"\n\n🚚 روش ارسال: {shipping_method or 'انتخاب نشده'}\n{shipping_note}"
+
+
+
+
+
+def _build_checkout_summary_text(context: ContextTypes.DEFAULT_TYPE) -> str:
+    cart = context.user_data.get("cart", [])
+    customer = context.user_data.get("customer", {})
+    total = _calc_cart_total(cart)
+
+    lines = []
+    for i, it in enumerate(cart, 1):
+        lines.append(
+            f"{i}) {it['name']} | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
+            f"تعداد: {it['qty']} | {_ftm_toman(it['qty'] * it['price'])}"
+        )
+    joined_lines = "\n".join(lines) if lines else "—"
+
+    ship_label = SHIPPING_METHODS.get(customer.get("shipping_method"), {}).get("label") if customer.get("shipping_method") else "انتخاب نشده"
+
+    info = (
+        "🧾 **خلاصه سفارش و مشخصات مشتری**:\n\n"
+        "👤 **نام و نام خانوادگی**: `{name}`\n"
+        "📞 **شماره موبایل**: `{phone}`\n"
+        "🏠 **آدرس**: `{address}`\n"
+        "📮 **کد پستی**: `{postal}`\n"
+        "🚚 **روش ارسال**: `{ship}`\n\n"
+        "🛍️ **محصولات سفارش داده شده**:\n"
+        "{items}\n\n"
+        "💰 **مبلغ قابل پرداخت**: **{total}**"
+    ).format(
+        name=customer.get('name', '—'),
+        phone=customer.get('phone', '—'),
+        address=customer.get('address', '—'),
+        postal=customer.get('postal', '—'),
+        ship=ship_label,
+        items=joined_lines,
+        total=_ftm_toman(total)
+    )
+    return info
 
 
 # ------------------ Manual payment / receipt workflow ------------------
@@ -1280,6 +1349,7 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
         "total": _calc_cart_total(cart),
         "items": cart,
         "customer": customer,
+        "shipping_method": customer.get("shipping_method"),
         "shipping_status": "pending",
         "tracking_code": None,
         "history": [{"at": datetime.utcnow().isoformat() + "Z", "by": "system", "text": "سفارش ساخته شد و در انتظار رسید است."}],
@@ -1302,15 +1372,19 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     cards_text = ""
     for i, card in enumerate(CARDS, start=1):
         cards_text += (f"{i}) 💳 `{format_card_number(card['number'])}`\n"f"👤 ({card['holder']})\n\n")
+    
+    shipping_method = order.get("shipping_method") or context.user_data.get("shipping_method")
+    shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
 
     text = (
     "💳 **پرداخت کارت به کارت**\n\n"
-    f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
+    f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n"
+    f"🚚 روش ارسال: **{SHIPPING_METHODS.get(order.get('shipping_method') or (order.get('customer',{}).get('shipping_method')), {}).get('label', 'انتخاب نشده')}**\n\n"
     "🔹 اطلاعات حساب‌های فروشگاه (برای کپی، روی شماره بزنید):\n\n"
-    f"{cards_text}"
+    f"{cards_text}\n"
+    f"\n🚚 روش ارسال: {shipping_method}\n{shipping_note}\n"
     "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
 )
-
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
@@ -1723,6 +1797,18 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
+    customer = context.user_data.get("customer", {})
+    if not customer or not customer.get("shipping_method"):
+        # کاربر هنوز روش ارسال را انتخاب نکرده
+        await q.answer("ابتدا روش ارسال را انتخاب کنید.", show_alert=True)
+        text = _build_checkout_summary_text(context)
+        try:
+            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(None), parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+
     order_id = _create_order_from_current_cart(update, context)
     if not order_id:
         await q.edit_message_text("❌ سبد خرید یا مشخصات مشتری کامل نیست. لطفاً دوباره تلاش کنید.", reply_markup=main_menu())
@@ -1829,7 +1915,53 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         
     
 
-    # ---- manual payment / receipt callbacks ----
+    
+    # ---- shipping method callbacks ----
+    if data == "shipmethod:choose":
+        customer = context.user_data.get("customer", {})
+        selected = customer.get("shipping_method")
+        text = _build_checkout_summary_text(context)
+        try:
+            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
+        return
+    
+    if data.startswith("shipmethod:set:"):
+        _, _, method = data.split(":", 2)
+        if method not in SHIPPING_METHODS:
+            await q.answer("روش ارسال نامعتبر است.", show_alert=True)
+            return
+        context.user_data.setdefault("customer", {})["shipping_method"] = method
+        text = _build_checkout_summary_text(context)
+        # برگشت به خلاصه سفارش با کیبورد اصلی همان مرحله
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
+            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
+            [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
+            [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ])
+        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        await q.answer("روش ارسال ثبت شد ✅", show_alert=False)
+        info = SHIPPING_INFO.get(method, "هزینه ارسال بر عهده مشتری است.")
+        await q.answer(info, show_alert=True)
+        return
+    
+    if data == "shipmethod:back":
+        text = _build_checkout_summary_text(context)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
+            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
+            [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
+            [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ])
+        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        return
+    # ---- end shipping method callbacks ----
+    
+# ---- manual payment / receipt callbacks ----
     if data.startswith("receipt:start:"):
         _, _, order_id = data.split(":", 2)
         await receipt_start(update, context, order_id)
@@ -2286,10 +2418,5 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
-
-
-
-
 
 
