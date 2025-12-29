@@ -1240,7 +1240,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
 
 # ------------------ Manual payment / receipt workflow ------------------
 
-
+import jdatetime
 def _make_order_id() -> str:
     today = jdatetime.date.today().strftime("%Y%m%d")
 
