@@ -1284,14 +1284,16 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
     return order_id
 
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
-    """Send bank-card options (each with its own logo) + request receipt."""
-    if update.callback_query:
-        await update.callback_query.answer()
-
+    """Send card number (copyable) + request receipt."""
+    total = 0
     order = STORE.find_order(order_id)
-    total = order.get("total", 0) if order else 0
+    if order:
+        total = order.get("total", 0)
+    
+    cards_text = ""
+    for i, card in enumerate(CARDS, start=1):
+        cards_text += (f"{i}) 💳 `{format_card_number(card['number'])}`\n"f"👤 ({card['holder']})\n\n")
 
-    # 1) Send each card as a separate photo with its own bank logo (like the sample screenshot)
     for i, card in enumerate(CARDS, start=1):
         caption = (
             f"💳 کارت {i}\n"
@@ -1299,39 +1301,45 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
             f"`{format_card_number(card['number'])}`\n\n"
             "برای کپی، روی شماره بزنید."
         )
-        try:
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=card.get("logo"),
-                caption=caption,
-                parse_mode="Markdown",
-            )
-        except Exception:
-            # Fallback if photo URL is invalid/unreachable
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=caption,
-                parse_mode="Markdown",
-            )
 
-    # 2) Send a final message that only contains the action buttons (upload receipt)
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=card["logo"],
+        caption=caption,
+        parse_mode="Markdown"
+    )
+
+    text = (
+    "💳 **پرداخت کارت به کارت**\n\n"
+    f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
+    "🔹 اطلاعات حساب‌های فروشگاه (برای کپی، روی شماره بزنید):\n\n"
+    f"{cards_text}"
+    "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
+)
+
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
     ])
 
-    text = (
-        "💳 **پرداخت کارت به کارت**\n\n"
-        f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
-        "✅ پس از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
-    )
-
     await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text=text,
-        parse_mode="Markdown",
-        reply_markup=kb,
-    )
+    chat_id=update.effective_chat.id,
+    text=(
+        "✅ پس از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
+    ),
+    parse_mode="Markdown",
+    reply_markup=kb
+)
+
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        try:
+            await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+    else:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
 
 
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
@@ -1549,10 +1557,9 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await context.bot.send_message(
                 chat_id=int(order["user_chat_id"]),
                 text=(
-                    "🚚 سفارش شما ارسال شد."
+                    "🚚 سفارش شما ارسال شد.\n"
 
-
-                    f"🧾 شماره سفارش: {order_id}"
+                    f"🧾 شماره سفارش: {order_id}\n"
 
                     f"🔎 کد رهگیری: {track}"
                 ),
