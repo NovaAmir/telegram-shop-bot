@@ -26,8 +26,7 @@ if not BOT_TOKEN :
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 
 # Manual card payment settings
-CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277" , "logo":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766990418/mellat_jbrdq8.webp"} ,
-          {"holder":"امیرمهدی پیری" , "number": "5859831211429799" , "logo":"https://res.cloudinary.com/dkzhxotve/image/upload/v1766990433/tegarat_bv4gdk.webp"}]
+CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277"} , {"holder":"امیرمهدی پیری" , "number": "5859831211429799"}]
 ADMIN_USERNAME = "@Amirmehdi_84_11"
 
 
@@ -376,9 +375,7 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
     return None
 
 def format_card_number(card_number: str) -> str:
-    s = "".join(ch for ch in str(card_number) if ch.isdigit())
-    return " ".join(s[i:i+4] for i in range(0, len(s), 4))
-
+    return " ".join(card_number[i:i+4] for i in range(0, len(card_number), 4))
 
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
@@ -1294,21 +1291,6 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     for i, card in enumerate(CARDS, start=1):
         cards_text += (f"{i}) 💳 `{format_card_number(card['number'])}`\n"f"👤 ({card['holder']})\n\n")
 
-    for i, card in enumerate(CARDS, start=1):
-        caption = (
-            f"💳 کارت {i}\n"
-            f"👤 ({card['holder']})\n"
-            f"`{format_card_number(card['number'])}`\n\n"
-            "برای کپی، روی شماره بزنید."
-        )
-
-    await context.bot.send_photo(
-        chat_id=update.effective_chat.id,
-        photo=card["logo"],
-        caption=caption,
-        parse_mode="Markdown"
-    )
-
     text = (
     "💳 **پرداخت کارت به کارت**\n\n"
     f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n\n"
@@ -1317,19 +1299,11 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
 )
 
+
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
     ])
-
-    await context.bot.send_message(
-    chat_id=update.effective_chat.id,
-    text=(
-        "✅ پس از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
-    ),
-    parse_mode="Markdown",
-    reply_markup=kb
-)
 
     if update.callback_query:
         q = update.callback_query
@@ -1558,9 +1532,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 chat_id=int(order["user_chat_id"]),
                 text=(
                     "🚚 سفارش شما ارسال شد.\n"
-
                     f"🧾 شماره سفارش: {order_id}\n"
-
                     f"🔎 کد رهگیری: {track}"
                 ),
                 reply_markup=main_menu_reply()
