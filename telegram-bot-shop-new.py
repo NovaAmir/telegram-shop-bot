@@ -2293,10 +2293,11 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         await q.answer("---" , show_alert=False) ; return
     
 
+    
     if data == "flow:cancel":
         """
-        انصراف از جریان انتخاب محصول (سایز/تعداد) — باید کاربر را به مرحله مرور محصولات برگرداند،
-        نه این‌که وارد مسیر ثبت سفارش شود.
+        انصراف از جریان انتخاب محصول (سایز/تعداد).
+        خواستهٔ شما: پیام انتخاب محصول/تعداد (همین پیام فعلی) پاک شود و سپس صفحهٔ قبلی نمایش داده شود.
         """
         pend = context.user_data.get("pending") or {}
         gender = pend.get("gender")
@@ -2304,13 +2305,18 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 
         # پاکسازی وضعیت انتخاب فعلی
         context.user_data.pop("pending", None)
-        context.user_data['awaiting'] = None
+        context.user_data["awaiting"] = None
 
-        # اگر در حال انتخاب محصول بود، به لیست همان دسته برگرد
+        # ✅ پاک کردن پیام فعلی (پیام محصول/انتخاب سایز/تعداد)
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.callback_query.message.message_id)
+        except Exception:
+            pass
+
+        # برگشت به مرحله مناسب
         if gender and category:
             await show_products(update, context, gender, category)
         else:
-            # در غیر این صورت (مثلاً از جای دیگر)، سبد خرید را نشان بده
             await show_cart(update, context)
         return
 
