@@ -27,6 +27,9 @@ if not BOT_TOKEN :
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 LOW_STOCK_THRESHOLD = int(os.getenv("LOW_STOCK_THRESHOLD", "2"))
+ABANDONED_CART_HOURS = int(os.getenv("ABANDONED_CART_HOURS", "24"))
+ABANDONED_CART_CHECK_MINUTES = int(os.getenv("ABANDONED_CART_CHECK_MINUTES", "60"))
+ABANDONED_CART_DISCOUNT_PERCENT = int(os.getenv("ABANDONED_CART_DISCOUNT_PERCENT", "5"))
 
 # Manual card payment settings
 CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277"} , {"holder":"امیرمهدی پیری" , "number": "5859831211429799"}]
@@ -540,6 +543,136 @@ def _summarize_popular_products(orders: List[dict]) -> Dict[str, dict]:
             if color:
                 entry["colors"][color] += qty
     return products
+
+def _generate_discount_code(prefix: str = "OFF") -> str:
+    token = uuid.uuid4().hex[:6].upper()
+    return f"{prefix}{ABANDONED_CART_DISCOUNT_PERCENT}-{token}"
+
+
+def _order_is_unpaid(order: dict) -> bool:
+    unpaid_statuses = {"awaiting_receipt", "receipt_submitted", "receipt_rejected"}
+    return order.get("status") in unpaid_statuses
+
+
+def _abandoned_order_age_hours(order: dict) -> Optional[float]:
+    created_at = _parse_iso_datetime(order.get("created_at"))
+    if not created_at:
+        return None
+    now = datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return (now - created_at).total_seconds() / 3600
+
+
+def _abandoned_report_lines(order: dict, age_hours: float) -> str:
+    username = order.get("username") or "—"
+    chat_id = order.get("user_chat_id") or "—"
+    return (
+        f"• OrderID: {order.get('order_id')}\n"
+        f"  کاربر: `@{username}` | ChatID: `{chat_id}`\n"
+        f"  وضعیت: {order.get('status')} | مبلغ: {_ftm_toman(int(order.get('total', 0) or 0))}\n"
+        f"  سن سبد: {age_hours:.1f} ساعت | کد تخفیف: {order.get('abandoned_discount_code') or '—'}"
+    )
+
+
+async def _process_abandoned_carts() -> None:
+    orders = STORE.data.get("orders", [])
+    if not orders:
+        return
+
+    admin_id = _ensure_admin_chat_id()
+    threshold_hours = ABANDONED_CART_HOURS
+    report_lines: List[str] = []
+    report_order_ids: List[str] = []
+
+    for order in orders:
+        if not _order_is_unpaid(order):
+            continue
+
+        age_hours = _abandoned_order_age_hours(order)
+        if age_hours is None or age_hours < threshold_hours:
+            continue
+
+        order_id = order.get("order_id")
+        if not order_id:
+            continue
+
+        if not order.get("abandoned_discount_code"):
+            code = _generate_discount_code()
+            STORE.update_order(order_id, abandoned_discount_code=code)
+            order["abandoned_discount_code"] = code
+
+        if not order.get("abandoned_notified_at"):
+            total = int(order.get("total", 0) or 0)
+            cards_text = ""
+            for i, card in enumerate(CARDS, start=1):
+                cards_text += (f"{i}) 💳 {format_card_number(card['number'])}\n" f"👤 {card['holder']}\n")
+
+            shipping_method = (order.get("shipping_method") or order.get("customer", {}).get("shipping_method"))
+            ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
+            shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
+
+            discount_code = order.get("abandoned_discount_code")
+            text = (
+                "🛒 **یادآوری سبد خرید**\n\n"
+                f"سبد خرید شما بیش از {threshold_hours} ساعت بدون پرداخت مانده است. اگر قصد تکمیل خرید دارید، "
+                "با استفاده از کد تخفیف زیر می‌توانید پرداخت را انجام دهید.\n\n"
+                f"🧾 شماره سفارش: `{order_id}`\n"
+                f"💰 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n"
+                f"🚚 روش ارسال: **{ship_label}**\n"
+                f"{shipping_note}\n\n"
+                f"🎁 کد تخفیف شما: **{discount_code}** ({ABANDONED_CART_DISCOUNT_PERCENT}% تخفیف)\n"
+                "برای اعمال تخفیف، کد را هنگام ارسال رسید پرداخت اعلام کنید.\n\n"
+                "🔹 اطلاعات حساب‌های فروشگاه:\n"
+                f"{cards_text}\n"
+                "بعد از پرداخت، رسید را ارسال کنید."
+            )
+
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📸 ارسال رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
+                [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+            ])
+
+            try:
+                await application.bot.send_message(
+                    chat_id=int(order.get("user_chat_id")),
+                    text=text,
+                    reply_markup=kb,
+                    parse_mode="Markdown",
+                )
+                STORE.update_order(order_id, abandoned_notified_at=datetime.utcnow().isoformat() + "Z")
+                _order_log(order_id, "system", "یادآوری سبد خرید و کد تخفیف ارسال شد.")
+            except Exception as exc:
+                logger.warning("Failed to send abandoned cart message for %s: %s", order_id, exc)
+
+        if admin_id and not order.get("abandoned_reported_at"):
+            report_lines.append(_abandoned_report_lines(order, age_hours))
+            report_order_ids.append(order_id)
+
+    if admin_id and report_lines:
+        report_text = (
+            "📊 **گزارش سبدهای رها شده**\n\n"
+            + "\n\n".join(report_lines)
+        )
+        try:
+            await application.bot.send_message(
+                chat_id=int(admin_id),
+                text=report_text,
+                parse_mode="Markdown",
+            )
+            for order_id in report_order_ids:
+                STORE.update_order(order_id, abandoned_reported_at=datetime.utcnow().isoformat() + "Z")
+        except Exception as exc:
+            logger.warning("Failed to send abandoned cart report: %s", exc)
+
+
+async def _abandoned_cart_worker() -> None:
+    while True:
+        try:
+            await _process_abandoned_carts()
+        except Exception as exc:
+            logger.exception("abandoned cart worker error: %s", exc)
+        await asyncio.sleep(max(5, ABANDONED_CART_CHECK_MINUTES) * 60)
 
 def _top_counter_value(counter: Counter) -> tuple[str, int] | None:
     if not counter:
@@ -2649,6 +2782,7 @@ async def _ptb_init_and_webhook():
             drop_pending_updates=True,
             allowed_updates=Update.ALL_TYPES,
         )
+        asyncio.create_task(_abandoned_cart_worker())
         logger.info(f"Webhook set to: {WEBHOOK_URL}")
     except Exception as e:
         logger.error("Failed to set webhook: %s", e)
