@@ -5,6 +5,7 @@ import os
 import json
 import uuid
 import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Dict,List,Optional,Tuple
 import emoji
@@ -509,6 +510,35 @@ def _summarize_sales(orders: List[dict], start: datetime, end: datetime) -> Dict
         "total_items": total_items,
     }
 
+def _summarize_popular_products(orders: List[dict]) -> Dict[str, dict]:
+    products: Dict[str, dict] = {}
+    for order in orders:
+        for item in order.get("items", []):
+            product_id = item.get("product_id") or item.get("name") or "unknown"
+            entry = products.setdefault(
+                product_id,
+                {
+                    "name": item.get("name") or "—",
+                    "total": 0,
+                    "sizes": Counter(),
+                    "colors": Counter(),
+                },
+            )
+            qty = int(item.get("qty", 0) or 0)
+            entry["total"] += qty
+            size = item.get("size")
+            if size:
+                entry["sizes"][size] += qty
+            color = item.get("color")
+            if color:
+                entry["colors"][color] += qty
+    return products
+
+def _top_counter_value(counter: Counter) -> tuple[str, int] | None:
+    if not counter:
+        return None
+    return counter.most_common(1)[0]
+
 # **[تغییر]** توابع کمکی برای مدیریت سبد خرید (حذف/کم و زیاد کردن)
 def _update_cart_item_qty(cart: List[dict], item_index: int, delta: int) -> bool:
     """تغییر تعداد یک آیتم در سبد خرید. اگر تعداد به صفر برسد، آیتم حذف می‌شود."""
@@ -683,6 +713,62 @@ async def admin_sales_dashboard(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(text)
 
 # --- end admin helpers ---
+
+async def admin_popular_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    admin_id = _ensure_admin_chat_id()
+    if not admin_id:
+        await update.message.reply_text("⚠️ ادمین ثبت نشده است. لطفاً ابتدا دستور /admin را بزنید.")
+        return
+    if update.effective_chat.id != admin_id:
+        await update.message.reply_text("❌ دسترسی غیرمجاز.")
+        return
+
+    orders = _paid_orders_only(STORE.data.get("orders", []))
+    if not orders:
+        await update.message.reply_text("هنوز سفارشی پرداخت/تاییدشده‌ای ثبت نشده است.")
+        return
+
+    products = _summarize_popular_products(orders)
+    if not products:
+        await update.message.reply_text("اطلاعات فروش برای تحلیل کافی نیست.")
+        return
+
+    sorted_products = sorted(products.values(), key=lambda x: x["total"], reverse=True)
+    overall_sizes = Counter()
+    overall_colors = Counter()
+    for p in sorted_products:
+        overall_sizes.update(p["sizes"])
+        overall_colors.update(p["colors"])
+
+    lines = []
+    for i, p in enumerate(sorted_products[:10], 1):
+        top_size = _top_counter_value(p["sizes"])
+        top_color = _top_counter_value(p["colors"])
+        size_text = f"{top_size[0]} ({top_size[1]})" if top_size else "—"
+        color_text = f"{top_color[0]} ({top_color[1]})" if top_color else "—"
+        lines.append(
+            f"{i}. {p['name']} — فروش: {p['total']} عدد | سایز پرفروش: {size_text} | رنگ پرفروش: {color_text}"
+        )
+
+    overall_size = _top_counter_value(overall_sizes)
+    overall_color = _top_counter_value(overall_colors)
+    overall_block = "📌 جمع‌بندی کلی\n"
+    if overall_size:
+        overall_block += f"سایز پرفروش: {overall_size[0]} ({overall_size[1]})\n"
+    else:
+        overall_block += "سایز پرفروش: —\n"
+    if overall_color:
+        overall_block += f"رنگ پرفروش: {overall_color[0]} ({overall_color[1]})\n"
+    else:
+        overall_block += "رنگ پرفروش: —\n"
+
+    text = (
+        "📣 محصولات پرفروش + سایز + رنگ\n\n"
+        + "\n".join(lines)
+        + "\n\n"
+        + overall_block
+    )
+    await update.message.reply_text(text)
 
 async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -2482,6 +2568,7 @@ application.add_handler(CommandHandler("admin", admin_register))
 application.add_handler(CommandHandler("myid", my_id))
 application.add_handler(CommandHandler("sales", admin_sales_dashboard))
 application.add_handler(CommandHandler("dashboard", admin_sales_dashboard))
+application.add_handler(CommandHandler("popular", admin_popular_products))
 
 
 # Conversation Handler برای فرم مشتری
