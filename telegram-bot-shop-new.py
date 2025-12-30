@@ -5,7 +5,7 @@ import os
 import json
 import uuid
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict,List,Optional,Tuple
 import emoji
 import requests
@@ -469,6 +469,46 @@ def _ftm_toman(n:int) -> str :
 def _calc_cart_total(cart:List[dict]) -> int:
     return sum(it["qty"] * it["price"] for it in cart)
 
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+def _order_sales_datetime(order: dict) -> Optional[datetime]:
+    for key in ("confirmed_at", "created_at"):
+        dt = _parse_iso_datetime(order.get(key))
+        if dt:
+            return dt
+    return None
+
+def _paid_orders_only(orders: List[dict]) -> List[dict]:
+    paid_statuses = {"paid", "paid_confirmed"}
+    return [o for o in orders if o.get("status") in paid_statuses]
+
+def _summarize_sales(orders: List[dict], start: datetime, end: datetime) -> Dict[str, int]:
+    total_amount = 0
+    total_orders = 0
+    total_items = 0
+    for order in orders:
+        order_dt = _order_sales_datetime(order)
+        if not order_dt:
+            continue
+        if not (start <= order_dt <= end):
+            continue
+        total_orders += 1
+        total_amount += int(order.get("total", 0) or 0)
+        total_items += sum(int(it.get("qty", 0) or 0) for it in order.get("items", []))
+    return {
+        "total_amount": total_amount,
+        "total_orders": total_orders,
+        "total_items": total_items,
+    }
+
 # **[تغییر]** توابع کمکی برای مدیریت سبد خرید (حذف/کم و زیاد کردن)
 def _update_cart_item_qty(cart: List[dict], item_index: int, delta: int) -> bool:
     """تغییر تعداد یک آیتم در سبد خرید. اگر تعداد به صفر برسد، آیتم حذف می‌شود."""
@@ -602,6 +642,45 @@ async def admin_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"ChatID شما: {update.effective_chat.id}")
+
+async def admin_sales_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    admin_id = _ensure_admin_chat_id()
+    if not admin_id:
+        await update.message.reply_text("⚠️ ادمین ثبت نشده است. لطفاً ابتدا دستور /admin را بزنید.")
+        return
+    if update.effective_chat.id != admin_id:
+        await update.message.reply_text("❌ دسترسی غیرمجاز.")
+        return
+
+    now = datetime.now(timezone.utc)
+    start_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_week = now - timedelta(days=7)
+    start_month = now - timedelta(days=30)
+
+    orders = _paid_orders_only(STORE.data.get("orders", []))
+    daily = _summarize_sales(orders, start_day, now)
+    weekly = _summarize_sales(orders, start_week, now)
+    monthly = _summarize_sales(orders, start_month, now)
+
+    def _format_sales_block(title: str, data: Dict[str, int]) -> str:
+        return (
+            f"{title}\n"
+            f"سفارش‌ها: {data['total_orders']}\n"
+            f"آیتم‌ها: {data['total_items']}\n"
+            f"فروش: {_ftm_toman(data['total_amount'])}\n"
+        )
+
+    text = (
+        "📊 داشبورد فروش\n\n"
+        + _format_sales_block("📅 روزانه (امروز)", daily)
+        + "\n"
+        + _format_sales_block("📆 هفتگی (۷ روز اخیر)", weekly)
+        + "\n"
+        + _format_sales_block("🗓️ ماهانه (۳۰ روز اخیر)", monthly)
+        + "\n"
+        "ℹ️ فقط سفارش‌های پرداخت‌شده/تاییدشده محاسبه شده‌اند."
+    )
+    await update.message.reply_text(text)
 
 # --- end admin helpers ---
 
@@ -2401,6 +2480,9 @@ application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("admin", admin_register))
 application.add_handler(CommandHandler("myid", my_id))
+application.add_handler(CommandHandler("sales", admin_sales_dashboard))
+application.add_handler(CommandHandler("dashboard", admin_sales_dashboard))
+
 
 # Conversation Handler برای فرم مشتری
 conv_handler = ConversationHandler(
