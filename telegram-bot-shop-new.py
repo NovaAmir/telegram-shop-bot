@@ -243,6 +243,23 @@ for gender in CATALOG:
         CATEGORY_MAP[_safe_callback(cat)] = cat
 logger.info(f"CATEGORY_MAP contents: {CATEGORY_MAP}")
 
+PAY_STATUS_FA = {
+    "awaiting_receipt": "⏳ در انتظار ارسال رسید",
+    "receipt_sent": "📨 رسید ارسال شد (در انتظار بررسی)",
+    "paid_confirmed": "✅ پرداخت تایید شد",
+    "paid_rejected": "❌ پرداخت رد شد",
+    "cancelled": "لغو شد",
+}
+
+SHIP_STATUS_FA = {
+    "pending": "⏳ هنوز ارسال نشده",
+    "packed": "📦 بسته‌بندی شد",
+    "shipped": "🚚 تحویل پست شد / ارسال شد",
+    "delivered": "✅ تحویل شد",
+}
+
+
+
 
 #     منوها
 
@@ -1038,22 +1055,22 @@ async def show_my_order_status(update: Update, context: ContextTypes.DEFAULT_TYP
     order_id = o.get("order_id")
     status = o.get("status")
     ship = o.get("shipping_status", "pending")
-    track = o.get("tracking_code") or "—"
+    track = o.get("tracking_code") or "ثبت نشده"
 
     text = (
         f"📦 وضعیت آخرین سفارش شما:\n\n"
         f"🧾 شماره سفارش: {order_id}\n"
-        f"💳 وضعیت پرداخت: {status}\n"
-        f"🚚 وضعیت ارسال: {ship}\n"
+        f"💳 وضعیت پرداخت: {PAY_STATUS_FA.get(status, '—')}\n"
+        f"🚚 وضعیت ارسال: {SHIP_STATUS_FA.get(ship, '—')}\n"
         f"🔎 کد رهگیری: {track}\n"
     )
 
     # آخرین 3 رویداد
-    hist = o.get("history", [])[-3:]
-    if hist:
-        text += "\nآخرین تغییرات:\n"
-        for h in hist:
-            text += f"- {h.get('text')} ({h.get('at')})\n"
+    last_event = (o.get("history") or [])[-1:]  # فقط آخرین آیتم
+    if last_event:
+        h = last_event[0]
+        text += f"\nآخرین تغییر: {h.get('text')}"
+
 
     await update.message.reply_text(text, reply_markup=main_menu_reply())
 
@@ -1256,15 +1273,12 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
 
     await send(chat_id=chat_id, text=info, reply_markup=kb, parse_mode="Markdown")
     # ✅ بازگرداندن منوی اصلی (Reply Keyboard) بعد از اتمام فرم
-    await context.bot.send_message(
+    m = await context.bot.send_message(
         chat_id=chat_id,
         text="✅فرم مشخصات تکمیل شد.",
         reply_markup=main_menu_reply(),
     )
-
-
-
-
+    context.user_data["form_done_msg_id"] = m.message_id
 
 def _build_checkout_summary_text(context: ContextTypes.DEFAULT_TYPE) -> str:
     cart = context.user_data.get("cart", [])
@@ -1407,6 +1421,12 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     q = update.callback_query
     await q.answer()
+    mid = context.user_data.pop("form_done_msg_id", None)
+    if mid:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=int(mid))
+        except Exception:
+            pass
     order = STORE.find_order(order_id)
     if not order:
         await q.edit_message_text("❌ سفارش پیدا نشد.", reply_markup=main_menu())
