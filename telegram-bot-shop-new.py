@@ -26,6 +26,7 @@ if not BOT_TOKEN :
     logger.warning("⚠️ متغییر محیطی BOT_TOKEN تنظیم نشده است . قبل از اجرا آن را ست کنید .")
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
+LOW_STOCK_THRESHOLD = int(os.getenv("LOW_STOCK_THRESHOLD", "2"))
 
 # Manual card payment settings
 CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277"} , {"holder":"امیرمهدی پیری" , "number": "5859831211429799"}]
@@ -45,6 +46,12 @@ def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
         if safe_color_test == safe_color:
             return color
     return None
+
+
+def _low_stock_warning(available: int) -> str:
+    if available > 0 and available <= LOW_STOCK_THRESHOLD:
+        return f"⚠️ موجودی رو به اتمام است (فقط {available} عدد باقی مانده)."
+    return ""
 
 
 #      storge(json)
@@ -1059,12 +1066,21 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     pend["price"] = price
 
     photo = _product_photo_for_list(p)
-    cap = (
-        f"{p['name']}\nسایز: {chosen_size}\n"
-        f"موجودی: {available}\n"
-        f"قیمت واحد: {_ftm_toman(price)}\n"
-        f"قیمت نهایی: {_ftm_toman(price)}"
+    warning = _low_stock_warning(available)
+    cap_lines = [
+        f"{p['name']}",
+        f"سایز: {chosen_size}",
+        f"موجودی: {available}",
+    ]
+    if warning:
+        cap_lines.append(warning)
+    cap_lines.extend(
+        [
+            f"قیمت واحد: {_ftm_toman(price)}",
+            f"قیمت نهایی: {_ftm_toman(price)}",
+        ]
     )
+    cap = "\n".join(cap_lines)
 
     # ✅ مرحله D: به‌جای پیام جدید، همان پیام قبلی را ویرایش کن
     try:
@@ -1114,12 +1130,21 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
     }
 
     photo = v.get("photo") or _product_photo_for_list(p)
-    cap = (
-        f"{p['name']}\nرنگ: {color} | سایز: {size}\n"
-        f"موجودی: {available}\n"
-        f"قیمت واحد: {_ftm_toman(v['price'])}\n"
-        f"قیمت نهایی: {_ftm_toman(v['price'])}"
+    warning = _low_stock_warning(available)
+    cap_lines = [
+        f"{p['name']}",
+        f"رنگ: {color} | سایز: {size}",
+        f"موجودی: {available}",
+    ]
+    if warning:
+        cap_lines.append(warning)
+    cap_lines.extend(
+        [
+            f"قیمت واحد: {_ftm_toman(v['price'])}",
+            f"قیمت نهایی: {_ftm_toman(v['price'])}",
+        ]
     )
+    cap = "\n".join(cap_lines)
 
     # ✅ مرحله D: به‌جای پیام جدید، همان پیام قبلی را ویرایش کن
     try:
