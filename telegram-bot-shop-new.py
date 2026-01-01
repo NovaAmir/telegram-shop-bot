@@ -398,8 +398,8 @@ ORDER_STATUS_FA = {
     "awaiting_receipt": "⏳ در انتظار ارسال رسید",
     "receipt_submitted": "📨 رسید ارسال شد",
     "receipt_rejected": "❌ رسید رد شد",
-    "paid": "💳 پرداخت آنلاین",
-    "paid_confirmed": "✅ پرداخت تایید شد",
+    "paid": "💳 پرداخت آنلاین ( در انتظار بررسی)",
+    "paid_confirmed": "✅ پرداخت تأیید شده توسط ادمین",
     "fulfilled": "📦 تکمیل و ارسال شده",
 }
 
@@ -798,6 +798,108 @@ def _decrement_inventory(item:dict):
     sizes[size] = cur - qty 
     STORE.set_catalog(CATALOG)
     return True
+
+def _increment_inventory(item: dict):
+    """برگرداندن/آزادسازی موجودی رزرو شده (برعکس _decrement_inventory)."""
+    p = _find_product(item["gender"], item["category"], item["product_id"])
+    if not p:
+        return False
+    color = item.get("color")
+    size = item.get("size")
+    qty = item["qty"]
+    if "variants" in p and color:
+        sizes = p["variants"][color]["sizes"]
+    else:
+        sizes = p["sizes"]
+    cur = int(sizes.get(size, 0))
+    sizes[size] = cur + qty
+    STORE.set_catalog(CATALOG)
+    return True
+
+
+
+
+# ------------------ Inventory reservation (prevent oversell) ------------------
+# ایده: به محض ورود کاربر به مرحله «پرداخت/ارسال رسید»، موجودی را رزرو می‌کنیم تا کاربر دیگری نتواند همان کالا را بخرد.
+# اگر پرداخت انجام نشد یا کاربر رها کرد، بعد از مدت مشخص رزرو آزاد می‌شود.
+try:
+    RESERVE_TTL_MINUTES = int(os.getenv("RESERVE_TTL_MINUTES", "15"))
+except Exception:
+    RESERVE_TTL_MINUTES = 15
+
+def _reserve_inventory_for_order(order_id: str) -> bool:
+    """رزرو موجودی برای یک سفارش. اگر موجودی کافی نباشد، هیچ رزروی باقی نمی‌ماند."""
+    order = STORE.find_order(order_id)
+    if not order:
+        return False
+
+    # اگر قبلاً رزرو شده
+    if order.get("inventory_reserved"):
+        return True
+
+    reserved_items = []
+    for it in (order.get("items") or []):
+        ok = _decrement_inventory(it)
+        if not ok:
+            # rollback
+            for rit in reserved_items:
+                _increment_inventory(rit)
+            return False
+        reserved_items.append(it)
+
+    STORE.update_order(
+        order_id,
+        inventory_reserved=True,
+        reserved_at=datetime.utcnow().isoformat() + "Z",
+    )
+    _order_log(order_id, "system", f"موجودی برای {RESERVE_TTL_MINUTES} دقیقه رزرو شد.")
+    return True
+
+def _release_inventory_for_order(order_id: str, reason: str = "رزرو آزاد شد.") -> None:
+    """آزادسازی موجودی رزرو شده (برگرداندن به انبار)."""
+    order = STORE.find_order(order_id)
+    if not order:
+        return
+    if not order.get("inventory_reserved"):
+        return
+
+    for it in (order.get("items") or []):
+        _increment_inventory(it)
+
+    STORE.update_order(
+        order_id,
+        inventory_reserved=False,
+        released_at=datetime.utcnow().isoformat() + "Z",
+    )
+    _order_log(order_id, "system", reason)
+
+def _cleanup_expired_reservations() -> None:
+    """آزادسازی رزروهای قدیمی (مثلاً وقتی کاربر پرداخت را نیمه‌کاره رها می‌کند)."""
+    orders = STORE.data.get("orders", []) or []
+    now_utc = datetime.now(timezone.utc)
+    ttl = timedelta(minutes=RESERVE_TTL_MINUTES)
+
+    for o in orders:
+        try:
+            if not o.get("inventory_reserved"):
+                continue
+            # اگر به مرحله قطعی رسیده، آزاد نکن
+            if o.get("status") in ("paid", "paid_confirmed", "fulfilled"):
+                continue
+
+            dt = _parse_dt_utc_z(o.get("reserved_at"))
+            if not dt:
+                continue
+
+            if (now_utc - dt) > ttl:
+                oid = o.get("order_id")
+                if not oid:
+                    continue
+                _release_inventory_for_order(oid, reason="رزرو منقضی شد و آزاد گردید.")
+                STORE.update_order(oid, status="cancelled", cancel_reason="reservation_expired")
+        except Exception:
+            continue
+# ------------------ end inventory reservation ------------------
 
 
 #   /start
@@ -1812,6 +1914,16 @@ async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
         await q.edit_message_text("❌ سفارش پیدا نشد.", reply_markup=main_menu())
         return
 
+    # پاکسازی رزروهای منقضی شده
+    _cleanup_expired_reservations()
+
+    # رزرو موجودی در صورت نیاز (برای جلوگیری از فروش بیش از موجودی)
+    ok = _reserve_inventory_for_order(order_id)
+    if not ok:
+        STORE.update_order(order_id, status="cancelled", cancel_reason="out_of_stock")
+        await q.edit_message_text("❌ متأسفانه موجودی این سفارش تمام شده است. اگر پرداخت انجام داده‌اید، با پشتیبانی هماهنگ کنید.", reply_markup=main_menu())
+        return
+
     # mark that we are waiting for a photo from this user
     context.user_data["awaiting_receipt"] = order_id
 
@@ -1831,7 +1943,14 @@ async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
 async def receipt_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     await q.answer()
+
+    oid = context.user_data.get("awaiting_receipt")
+    if oid:
+        _release_inventory_for_order(oid, reason="کاربر فرآیند ارسال رسید را لغو کرد و رزرو آزاد شد.")
+        STORE.update_order(oid, status="cancelled", cancel_reason="user_cancelled")
+
     context.user_data.pop("awaiting_receipt", None)
+    context.user_data.pop("active_order_id", None)
     await q.edit_message_text("انصراف داده شد. از منو می‌توانید ادامه دهید.", reply_markup=main_menu())
 
 
@@ -1931,11 +2050,8 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
         await q.answer("قبلاً تایید شده.", show_alert=False)
         return
 
-    # decrement inventory once confirmed
-    for it in order.get("items", []):
-        _decrement_inventory(it)
-
-    STORE.update_order(order_id, status="paid_confirmed", confirmed_at=datetime.utcnow().isoformat() + "Z")
+    # موجودی قبلاً هنگام checkout_pay رزرو شده است؛ اینجا کم‌کردن دوباره انجام نمی‌شود.
+    STORE.update_order(order_id, status="paid_confirmed", confirmed_at=datetime.utcnow().isoformat() + "Z", inventory_reserved=False, reserved_consumed_at=datetime.utcnow().isoformat() + "Z")
     _order_log(order_id, "admin", "پرداخت تایید شد. سفارش وارد مرحله پردازش شد.")
 
     admin_panel = admin_panel_keyboard(order_id)
@@ -2148,6 +2264,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # update order status
     STORE.update_order(order_id, status="receipt_rejected", rejected_at=datetime.utcnow().isoformat() + "Z", reject_message=msg)
+    _release_inventory_for_order(order_id, reason="رسید رد شد و رزرو آزاد گردید.")
 
     try:
         kb = InlineKeyboardMarkup([
@@ -2266,9 +2383,24 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+    # پاکسازی رزروهای منقضی شده (جلوگیری از قفل شدن موجودی)
+    _cleanup_expired_reservations()
+
     order_id = _create_order_from_current_cart(update, context)
     if not order_id:
         await q.edit_message_text("❌ سبد خرید یا مشخصات مشتری کامل نیست. لطفاً دوباره تلاش کنید.", reply_markup=main_menu())
+        return
+
+    # ذخیره سفارش فعال برای لغو احتمالی
+    context.user_data["active_order_id"] = order_id
+
+    # رزرو موجودی قبل از ارسال کاربر به مرحله پرداخت/ارسال رسید
+    ok = _reserve_inventory_for_order(order_id)
+    if not ok:
+        # سفارش ساخته شده ولی موجودی کافی نیست؛ کنسل و اطلاع‌رسانی
+        STORE.update_order(order_id, status="cancelled", cancel_reason="out_of_stock")
+        context.user_data.pop("active_order_id", None)
+        await q.edit_message_text("❌ متأسفانه موجودی برخی اقلام تمام شد. لطفاً سبد خرید را بررسی کنید.", reply_markup=main_menu())
         return
 
     await manual_payment_instructions(update, context, order_id)
@@ -2300,19 +2432,18 @@ async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, or
         logger.warning("Payment verify not ok: %s", res)
         return
     
-    for it in order["items"]:
-        ok = _decrement_inventory(it)
-        if not ok:
-            logger.error("Inventory not enough for %s", it)
-    
+    # موجودی قبلاً در مرحله checkout_pay رزرو شده است؛ اینجا دیگر از موجودی کم نمی‌کنیم.
     STORE.update_order(
         order_id,
         status="paid",
         paid_at=datetime.utcnow().isoformat() + "Z",
+        inventory_reserved=False,
+        reserved_consumed_at=datetime.utcnow().isoformat() + "Z",
         payment={**order["payment"], "verify_raw": res.get("raw"), "track_id": res.get("track_id")}
     )
 
     context.user_data["cart"] = []
+    context.user_data.pop("active_order_id", None)
 
     await q.edit_message_text(
         f"🎉 پرداخت با موفقیت انجام شد!\nشماره سفارش: {order_id}\n"
@@ -2821,12 +2952,20 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
     # نیاز به هندلر برای لغو سفارش
     if data == "checkout:cancel":
+        oid = context.user_data.get("active_order_id") or context.user_data.get("awaiting_receipt")
+        if oid:
+            _release_inventory_for_order(oid, reason="کاربر سفارش را لغو کرد و رزرو آزاد شد.")
+            STORE.update_order(oid, status="cancelled", cancel_reason="user_cancelled")
+
+        context.user_data.pop("active_order_id", None)
+        context.user_data.pop("awaiting_receipt", None)
         context.user_data.pop("cart" , None)
         context.user_data.pop("customer" , None)
         context.user_data.pop("pending" , None)
         context.user_data['awaiting'] = None
         await q.edit_message_text("❌ سفارش لغو شد. سبد خرید خالی شد.", reply_markup=main_menu())
-        # ✅ بازگرداندن منوی اصلی (Reply Keyboard)
+
+# ✅ بازگرداندن منوی اصلی (Reply Keyboard)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="از منوی پایین می‌تونی ادامه بدی.",
