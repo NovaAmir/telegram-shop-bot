@@ -394,6 +394,16 @@ SHIP_STATUS_FA = {
     "delivered": "✅ تحویل شد",
 }
 
+ORDER_STATUS_FA = {
+    "awaiting_receipt": "⏳ در انتظار ارسال رسید",
+    "receipt_submitted": "📨 رسید ارسال شد",
+    "receipt_rejected": "❌ رسید رد شد",
+    "paid": "💳 پرداخت آنلاین",
+    "paid_confirmed": "✅ پرداخت تایید شد",
+    "fulfilled": "📦 تکمیل و ارسال شده",
+}
+
+
 
 
 
@@ -905,37 +915,33 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     lines = []
     lines.append("📊 *داشبورد فروش*")
     lines.append(f"📅 تاریخ: `{date_label}`")
-    lines.append(f"🕒 منطقه زمانی: `UTC{TZ_OFFSET_MINUTES/60:+.1f}`")
     lines.append("")
     lines.append("🗓 *امروز*")
     lines.append(f"• تعداد سفارش پرداخت‌شده: `{today['count']}`")
     lines.append(f"• مبلغ فروش: *{_ftm_toman(today['amount'])}*")
-    lines.append(f"• میانگین سبد: `{_ftm_toman(today['avg'])}`")
-    lines.append(f"• تغییر نسبت به دیروز (مبلغ): `{_format_pct(_pct_change(today['amount'], yesterday['amount']))}`")
+    lines.append(f"• میانگین فروش : `{_ftm_toman(today['avg'])}`")
+    lines.append(f"• تغییر نسبت به دیروز : `{_format_pct(_pct_change(today['amount'], yesterday['amount']))}`")
     lines.append("")
     lines.append("📅 *۷ روز اخیر*")
-    lines.append(f"• تعداد: `{week['count']}`")
+    lines.append(f"• تعداد سفارش پرداخت شده: `{week['count']}`")
     lines.append(f"• فروش: *{_ftm_toman(week['amount'])}*")
-    lines.append(f"• میانگین: `{_ftm_toman(week['avg'])}`")
-    lines.append(f"• تغییر نسبت به ۷ روز قبل (مبلغ): `{_format_pct(_pct_change(week['amount'], prev_week['amount']))}`")
+    lines.append(f"• میانگین فروش : `{_ftm_toman(week['avg'])}`")
+    lines.append(f"• تغییر نسبت به ۷ روز قبل : `{_format_pct(_pct_change(week['amount'], prev_week['amount']))}`")
     lines.append("• پرفروش‌ها:")
     lines.append(_top_items_text(week["items"]))
     lines.append("")
     lines.append("📆 *۳۰ روز اخیر*")
-    lines.append(f"• تعداد: `{month['count']}`")
+    lines.append(f"• تعداد سفارش پرداخت شده: `{month['count']}`")
     lines.append(f"• فروش: *{_ftm_toman(month['amount'])}*")
-    lines.append(f"• میانگین: `{_ftm_toman(month['avg'])}`")
-    lines.append(f"• تغییر نسبت به ۳۰ روز قبل (مبلغ): `{_format_pct(_pct_change(month['amount'], prev_month['amount']))}`")
+    lines.append(f"• میانگین فروش : `{_ftm_toman(month['avg'])}`")
+    lines.append(f"• تغییر نسبت به ۳۰ روز قبل : `{_format_pct(_pct_change(month['amount'], prev_month['amount']))}`")
     lines.append("• پرفروش‌ها:")
     lines.append(_top_items_text(month["items"]))
     lines.append("")
     lines.append("📦 *وضعیت سفارش‌ها*")
-    lines.append(f"• awaiting_receipt: `{status_counts.get('awaiting_receipt', 0)}`")
-    lines.append(f"• receipt_submitted: `{status_counts.get('receipt_submitted', 0)}`")
-    lines.append(f"• receipt_rejected: `{status_counts.get('receipt_rejected', 0)}`")
-    lines.append(f"• paid: `{status_counts.get('paid', 0)}`")
-    lines.append(f"• paid_confirmed: `{status_counts.get('paid_confirmed', 0)}`")
-    lines.append(f"• fulfilled: `{status_counts.get('fulfilled', 0)}`")
+    for key, label in ORDER_STATUS_FA.items():
+        lines.append(f"• {label}: `{status_counts.get(key, 0)}`")
+
 
     msg = "\n".join(lines)
 
