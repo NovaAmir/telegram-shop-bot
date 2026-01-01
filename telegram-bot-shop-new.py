@@ -461,6 +461,20 @@ def main_menu() -> InlineKeyboardMarkup:
     ])
 
 
+
+async def _safe_edit_or_send(q, context, text: str, reply_markup=None):
+    """Try edit_message_text; if it fails (e.g., message not editable), send a new message."""
+    try:
+        await _safe_edit_or_send(q, context, text, reply_markup=reply_markup)
+        return
+    except Exception as e:
+        logger.warning("edit_message_text failed, sending new message: %s", e)
+    try:
+        await context.bot.send_message(chat_id=q.message.chat_id, text=text, reply_markup=reply_markup)
+    except Exception as e:
+        logger.exception("send_message also failed: %s", e)
+
+
 def gender_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
@@ -1082,7 +1096,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         q = update.callback_query
         await q.answer()
         try:
-            await q.edit_message_text(msg, parse_mode="Markdown", reply_markup=kb)
+            await _safe_edit_or_send(q, context, msg, parse_mode="Markdown",reply_markup=kb)
         except Exception:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode="Markdown", reply_markup=kb)
 
@@ -1103,7 +1117,7 @@ async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if update.callback_query:
         q = update.callback_query
         await q.answer()
-        await q.edit_message_text(text , reply_markup=reply_markup)
+        await _safe_edit_or_send(q, context, text, reply_markup=reply_markup)
     else:
         # اگر از Reply Keyboard (لیست محصولات) آمده است
         await update.message.reply_text(text , reply_markup=reply_markup)
@@ -1123,7 +1137,7 @@ async def show_categories(update:Update , context:ContextTypes.DEFAULT_TYPE , ge
         q = update.callback_query
         await q.answer()
         # ویرایش پیام قبلی
-        await q.edit_message_text(text , reply_markup=reply_markup)
+        await _safe_edit_or_send(q, context, text, reply_markup=reply_markup)
     else:
         # حالت اضطراری - اگر از Reply Keyboard آمده بود (که نباید اینگونه باشد)
         await update.message.reply_text(text , reply_markup=reply_markup)
@@ -1139,7 +1153,7 @@ async def show_products(update:Update, context:ContextTypes.DEFAULT_TYPE, gender
     if not items:
         # اگر محصولی نیست، کاربر را به صفحه دسته‌ها برگردان
         try:
-            await q.edit_message_text("فعلا محصولی در این دسته نیست", reply_markup=category_keyboard(gender))
+            await _safe_edit_or_send(q, context, "فعلا محصولی در این دسته نیست",reply_markup=category_keyboard(gender))
         except Exception:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -1229,7 +1243,7 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
 
     p = _find_product(gender, category, product_id)
     if not p or "variants" not in p:
-        await q.edit_message_text("محصول یا رنگ‌ها پیدا نشد.", reply_markup=category_keyboard(gender))
+        await _safe_edit_or_send(q, context, "محصول یا رنگ‌ها پیدا نشد.",reply_markup=category_keyboard(gender))
         return
 
     rows = []
@@ -1242,7 +1256,7 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
             )])
 
     if not rows:
-        await q.edit_message_text("هیچ رنگ و سایزی برای این محصول موجود نیست.", reply_markup=category_keyboard(gender))
+        await _safe_edit_or_send(q, context, "هیچ رنگ و سایزی برای این محصول موجود نیست.",reply_markup=category_keyboard(gender))
         return
 
     rows.append([InlineKeyboardButton("⬅️ انتخاب محصول دیگر", callback_data=f"catalog:category:{gender}:{_safe_callback(category)}")])
@@ -1260,13 +1274,13 @@ async def ask_color_and_size(update:Update, context:ContextTypes.DEFAULT_TYPE, g
                 reply_markup=InlineKeyboardMarkup(rows)
             )
         else:
-            await q.edit_message_text(caption, reply_markup=InlineKeyboardMarkup(rows))
+            await _safe_edit_or_send(q, context, caption,reply_markup=InlineKeyboardMarkup(rows))
     except Exception:
         # fallback اگر پیام عکس‌دار باشد ولی edit_message_media شکست بخورد
         try:
             await q.edit_message_caption(caption=caption, reply_markup=InlineKeyboardMarkup(rows))
         except Exception:
-            await q.edit_message_text(text=caption, reply_markup=InlineKeyboardMarkup(rows))
+            await _safe_edit_or_send(q, context, text=caption,reply_markup=InlineKeyboardMarkup(rows))
 
 
 async def after_color_ask_size(update:Update , context:ContextTypes.DEFAULT_TYPE , gender:str , category:str , product_id:str , color:str) -> None:
@@ -1311,7 +1325,7 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
 
     p = _find_product(gender, category, product_id)
     if not p or "sizes" not in p:
-        await q.edit_message_text("محصول یا سایزها پیدا نشد.", reply_markup=category_keyboard(gender))
+        await _safe_edit_or_send(q, context, "محصول یا سایزها پیدا نشد.",reply_markup=category_keyboard(gender))
         return
 
     available_sizes = [sz for sz, qty in p["sizes"].items() if qty > 0]
@@ -1334,12 +1348,12 @@ async def ask_size_only(update: Update, context: ContextTypes.DEFAULT_TYPE, gend
                 reply_markup=InlineKeyboardMarkup(rows)
             )
         else:
-            await q.edit_message_text(caption, reply_markup=InlineKeyboardMarkup(rows))
+            await _safe_edit_or_send(q, context, caption,reply_markup=InlineKeyboardMarkup(rows))
     except Exception:
         try:
             await q.edit_message_caption(caption=caption, reply_markup=InlineKeyboardMarkup(rows))
         except Exception:
-            await q.edit_message_text(text=caption, reply_markup=InlineKeyboardMarkup(rows))
+            await _safe_edit_or_send(q, context, text=caption,reply_markup=InlineKeyboardMarkup(rows))
 
        
 async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, chosen_size):
@@ -1348,13 +1362,13 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
 
     pend = context.user_data.get("pending")
     if not pend:
-        await q.edit_message_text("اطلاعات محصول ناقص است.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "اطلاعات محصول ناقص است.",reply_markup=main_menu())
         return
 
     # برای محصولات بدون رنگ
     p = _find_product(pend["gender"], pend["category"], pend["product_id"])
     if not p:
-        await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "محصول پیدا نشد.",reply_markup=main_menu())
         return
 
     sizes = p.get("sizes")
@@ -1367,12 +1381,12 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
             price = color_variant.get("price")
 
     if not sizes or chosen_size not in sizes:
-        await q.edit_message_text("سایز انتخابی معتبر نیست.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "سایز انتخابی معتبر نیست.",reply_markup=main_menu())
         return
 
     available = int(sizes.get(chosen_size, 0))
     if available <= 0:
-        await q.edit_message_text("این سایز موجود نیست.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "این سایز موجود نیست.",reply_markup=main_menu())
         return
 
     pend["size"] = chosen_size
@@ -1398,13 +1412,13 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
                 reply_markup=qty_keyboard(1, available)
             )
         else:
-            await q.edit_message_text(cap, reply_markup=qty_keyboard(1, available))
+            await _safe_edit_or_send(q, context, cap,reply_markup=qty_keyboard(1, available))
     except Exception as e:
         logger.error(f"Failed to edit message in qty picker for {p.get('id')}: {e}. Falling back to caption/text edit.")
         try:
             await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(1, available))
         except Exception:
-            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(1, available))
+            await _safe_edit_or_send(q, context, text=cap,reply_markup=qty_keyboard(1, available))
 
 
 
@@ -1414,13 +1428,13 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
 
     p = _find_product(gender, category, product_id)
     if not p or "variants" not in p:
-        await q.edit_message_text("محصول یا رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "محصول یا رنگ انتخابی معتبر نیست.",reply_markup=main_menu())
         return
 
     v = p["variants"][color]
     available = int(v["sizes"].get(size, 0))
     if available <= 0:
-        await q.edit_message_text("این سایز موجود نیست.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "این سایز موجود نیست.",reply_markup=main_menu())
         return
 
     context.user_data["pending"] = {
@@ -1453,13 +1467,13 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
                 reply_markup=qty_keyboard(1, available)
             )
         else:
-            await q.edit_message_text(cap, reply_markup=qty_keyboard(1, available))
+            await _safe_edit_or_send(q, context, cap,reply_markup=qty_keyboard(1, available))
     except Exception as e:
         logger.error(f"Failed to edit message in combined qty picker for {p.get('id')}: {e}. Falling back to caption/text edit.")
         try:
             await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(1, available))
         except Exception:
-            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(1, available))
+            await _safe_edit_or_send(q, context, text=cap,reply_markup=qty_keyboard(1, available))
 
 
 #       cart / checkout
@@ -1520,7 +1534,7 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         if q.message.caption:
             await q.edit_message_caption(caption=text , reply_markup=reply_markup , parse_mode="Markdown")
         else:
-            await q.edit_message_text(text , reply_markup=reply_markup , parse_mode="Markdown")
+            await _safe_edit_or_send(q, context, text ,reply_markup=reply_markup , parse_mode="Markdown")
     else:
         # اگر از دکمه Reply Keyboard آمده (Message)
         # یک پیام جدید ارسال می‌شود
@@ -1615,9 +1629,7 @@ async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return CUSTOMER_NAME
     else:
-        await q.edit_message_text(
-            "❌ سبد خرید شما خالی است.",
-            reply_markup=main_menu()
+        await _safe_edit_or_send(q, context, "❌ سبد خرید شما خالی است.",reply_markup=main_menu()
         )
         return ConversationHandler.END
 
@@ -1927,7 +1939,7 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         q = update.callback_query
         await q.answer()
         try:
-            await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+            await _safe_edit_or_send(q, context, text,reply_markup=kb, parse_mode="Markdown")
         except Exception:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
     else:
@@ -1945,7 +1957,7 @@ async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
             pass
     order = STORE.find_order(order_id)
     if not order:
-        await q.edit_message_text("❌ سفارش پیدا نشد.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "❌ سفارش پیدا نشد.",reply_markup=main_menu())
         return
 
     # پاکسازی رزروهای منقضی شده
@@ -1955,7 +1967,7 @@ async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
     ok = _reserve_inventory_for_order(order_id)
     if not ok:
         STORE.update_order(order_id, status="cancelled", cancel_reason="out_of_stock")
-        await q.edit_message_text("❌ متأسفانه موجودی این سفارش تمام شده است. اگر پرداخت انجام داده‌اید، با پشتیبانی هماهنگ کنید.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "❌ متأسفانه موجودی این سفارش تمام شده است. اگر پرداخت انجام داده‌اید، با پشتیبانی هماهنگ کنید.",reply_markup=main_menu())
         return
 
     # mark that we are waiting for a photo from this user
@@ -1969,7 +1981,7 @@ async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
         [InlineKeyboardButton("❌ انصراف", callback_data="receipt:cancel")],
     ])
     try:
-        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        await _safe_edit_or_send(q, context, text,reply_markup=kb, parse_mode="Markdown")
     except Exception:
         await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
 
@@ -1988,7 +2000,7 @@ async def receipt_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data.pop("current_order_id", None)
     context.user_data["cart"] = []
     context.user_data.pop("pending", None)
-    await q.edit_message_text("انصراف داده شد. از منو می‌توانید ادامه دهید.", reply_markup=main_menu())
+    await _safe_edit_or_send(q, context, "انصراف داده شد. از منو می‌توانید ادامه دهید.",reply_markup=main_menu())
 
 
 async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2421,9 +2433,7 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("ابتدا روش ارسال را انتخاب کنید.", show_alert=True)
         text = _build_checkout_summary_text(context)
         try:
-            await q.edit_message_text(
-                text,
-                reply_markup=shipping_methods_keyboard(customer.get("shipping_method")),
+            await _safe_edit_or_send(q, context, text,reply_markup=shipping_methods_keyboard(customer.get("shipping_method")),
                 parse_mode="Markdown"
             )
         except Exception as e:
@@ -2442,7 +2452,7 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_id = _create_order_from_current_cart(update, context)
     if not order_id:
-        await q.edit_message_text("❌ سبد خرید یا مشخصات مشتری کامل نیست. لطفاً دوباره تلاش کنید.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "❌ سبد خرید یا مشخصات مشتری کامل نیست. لطفاً دوباره تلاش کنید.",reply_markup=main_menu())
         return
 
     # ذخیره سفارش فعال برای لغو احتمالی
@@ -2454,7 +2464,7 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # سفارش ساخته شده ولی موجودی کافی نیست؛ کنسل و اطلاع‌رسانی
         STORE.update_order(order_id, status="cancelled", cancel_reason="out_of_stock")
         context.user_data.pop("active_order_id", None)
-        await q.edit_message_text("❌ متأسفانه موجودی برخی اقلام تمام شد. لطفاً سبد خرید را بررسی کنید.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "❌ متأسفانه موجودی برخی اقلام تمام شد. لطفاً سبد خرید را بررسی کنید.",reply_markup=main_menu())
         return
 
     await manual_payment_instructions(update, context, order_id)
@@ -2466,20 +2476,20 @@ async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, or
 
     order = STORE.find_order(order_id)
     if not order:
-        await q.edit_message_text("سفارش پیدا نشد.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "سفارش پیدا نشد.",reply_markup=main_menu())
         return
     if order.get("status") in ("paid", "fulfilled"):
-        await q.edit_message_text("این سفارش قبلاً پرداخت/تایید شده است. 🙌", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "این سفارش قبلاً پرداخت/تایید شده است. 🙌",reply_markup=main_menu())
         return
     
     payment_id = order.get("payment", {}).get("payment_id")
     if not payment_id:
-        await q.edit_message_text("شناسه پرداخت نامشخص است.", reply_markup=main_menu())
+        await _safe_edit_or_send(q, context, "شناسه پرداخت نامشخص است.",reply_markup=main_menu())
         return
     
     res = PAY.verify_payment(order_id, payment_id)
     if not res.get("ok"):
-        await q.edit_message_text("پرداخت هنوز تایید نشده یا ناموفق بوده است.", reply_markup=InlineKeyboardMarkup([
+        await _safe_edit_or_send(q, context, "پرداخت هنوز تایید نشده یا ناموفق بوده است.",reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔁 بررسی مجدد", callback_data=f"checkout:verify:{order_id}")],
             [InlineKeyboardButton("🏠 منو", callback_data="menu:back_home")],
         ]))
@@ -2543,7 +2553,7 @@ async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await q.answer()
         # پیام فعلی (Inline) را تبدیل به منو کن
         try:
-            await q.edit_message_text(text, reply_markup=main_menu())
+            await _safe_edit_or_send(q, context, text,reply_markup=main_menu())
         except Exception:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=main_menu())
 
@@ -2599,7 +2609,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                 await show_cart(update , context) ; return
 
             if data == "menu:support":
-                await q.edit_message_text(" پشتیبانی: @amirmehdi_84_10", reply_markup=main_menu()) ; return
+                await _safe_edit_or_send(q, context, " پشتیبانی: @amirmehdi_84_10",reply_markup=main_menu()) ; return
 
 
 
@@ -2610,7 +2620,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                 selected = customer.get("shipping_method")
                 text = _build_checkout_summary_text(context)
                 try:
-                    await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
+                    await _safe_edit_or_send(q, context, text,reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
                 except Exception:
                     await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
                 return
@@ -2638,7 +2648,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                     [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
                     [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
                 ])
-                await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+                await _safe_edit_or_send(q, context, text,reply_markup=kb, parse_mode="Markdown")
                 await q.answer("روش ارسال ثبت شد ✅", show_alert=False)
                 info = SHIPPING_INFO.get(method, "هزینه ارسال بر عهده مشتری است.")
                 await q.answer(info, show_alert=True)
@@ -2653,7 +2663,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                     [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
                     [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
                 ])
-                await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+                await _safe_edit_or_send(q, context, text,reply_markup=kb, parse_mode="Markdown")
                 return
             # ---- end shipping method callbacks ----
 
@@ -2762,7 +2772,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                 # برای محصولات بدون رنگ، باید قیمت و موجودی را از خود محصول بگیریم
                 p = _find_product(gender, category, product_id)
                 if not p:
-                    await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+                    await _safe_edit_or_send(q, context, "محصول پیدا نشد.",reply_markup=main_menu())
                     return
 
                 context.user_data["pending"] = {
@@ -2836,14 +2846,14 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             if data.startswith("catalog:choose:"):
                 parts = data.split(":", 6)
                 if len(parts) != 7:
-                    await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
+                    await _safe_edit_or_send(q, context, "داده انتخاب محصول ناقص است.",reply_markup=main_menu())
                     return
                 _, _, gender, category_safe, product_id, color_index_str, size = parts
                 category = CATEGORY_MAP.get(category_safe, category_safe)
 
                 p = _find_product(gender, category, product_id)
                 if not p or "variants" not in p:
-                    await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+                    await _safe_edit_or_send(q, context, "محصول پیدا نشد.",reply_markup=main_menu())
                     return
 
                 try:
@@ -2853,7 +2863,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                         raise ValueError("Invalid color index")
                     color = colors[color_index]
                 except (ValueError, IndexError):
-                    await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+                    await _safe_edit_or_send(q, context, "رنگ انتخابی معتبر نیست.",reply_markup=main_menu())
                     return
 
                 await show_qty_picker_combined(update, context, gender, category, product_id, color, size)
@@ -2867,12 +2877,12 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 
                 p = _find_product(gender, category, product_id)
                 if not p or "variants" not in p:
-                    await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+                    await _safe_edit_or_send(q, context, "محصول پیدا نشد.",reply_markup=main_menu())
                     return
 
                 color = _unsafe_color(color_safe, p["variants"])
                 if not color:
-                    await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+                    await _safe_edit_or_send(q, context, "رنگ انتخابی معتبر نیست.",reply_markup=main_menu())
                     return
 
                 await after_color_ask_size(update, context, gender, category, product_id, color)
@@ -2906,7 +2916,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                     await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
                 except Exception:
                     # اگر نشد، پیام را به صورت متنی ویرایش کن
-                    await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+                    await _safe_edit_or_send(q, context, text=cap,reply_markup=qty_keyboard(pend["qty"], pend["available"]))
                 return
 
 
@@ -2928,7 +2938,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                 try:
                     await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
                 except Exception:
-                    await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+                    await _safe_edit_or_send(q, context, text=cap,reply_markup=qty_keyboard(pend["qty"], pend["available"]))
                 return
 
             if data == "qty:add":
@@ -3032,7 +3042,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                 context.user_data.pop("customer" , None)
                 context.user_data.pop("pending" , None)
                 context.user_data['awaiting'] = None
-                await q.edit_message_text("❌ سفارش لغو شد. سبد خرید خالی شد.", reply_markup=main_menu())
+                await _safe_edit_or_send(q, context, "❌ سفارش لغو شد. سبد خرید خالی شد.",reply_markup=main_menu())
 
         # ✅ بازگرداندن منوی اصلی (Reply Keyboard)
                 await context.bot.send_message(
@@ -3047,7 +3057,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
                 await checkout_verify(update, context, order_id); return
 
 
-            await q.edit_message_text("❌ گزینه نامعتبر.", reply_markup=main_menu())
+            await _safe_edit_or_send(q, context, "❌ گزینه نامعتبر.",reply_markup=main_menu())
 
     except Exception as e:
         logger.exception("menu_router error (data=%s): %s", data, e)
@@ -3127,7 +3137,15 @@ async def _ptb_init_and_webhook():
         logger.error("Failed to set webhook: %s", e)
         
 # اجرای تنظیمات PTB در لوپ اصلی
-asyncio.run_coroutine_threadsafe(_ptb_init_and_webhook(), LOOP)
+fut_init = asyncio.run_coroutine_threadsafe(_ptb_init_and_webhook(), LOOP)
+def _log_init(f):
+    try:
+        exc = f.exception()
+    except Exception:
+        exc = None
+    if exc:
+        logger.exception('ptb init crashed: %s', exc)
+fut_init.add_done_callback(_log_init)
 
 # Flask app
 flask_app = Flask(__name__)
@@ -3144,7 +3162,15 @@ def telegram_webhook():
         # تا از خطا در thread اصلی وب‌هو‌ک جلوگیری شود.
         logger.info("Received Update JSON: %s", data)
         update = Update.de_json(data, application.bot)
-        asyncio.run_coroutine_threadsafe(application.process_update(update), LOOP) 
+        fut = asyncio.run_coroutine_threadsafe(application.process_update(update), LOOP)
+        def _log_future(f):
+            try:
+                exc = f.exception()
+            except Exception:
+                exc = None
+            if exc:
+                logger.exception('process_update crashed: %s', exc)
+        fut.add_done_callback(_log_future) 
         return "OK", 200
     except Exception as e:
         logger.exception("webhook handler error: %s", e)
