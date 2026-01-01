@@ -3889,17 +3889,17 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
         logger.error("Failed to notify user for approve: %s", e)
 
     
-# refresh admin message (receipt) with latest history/status
-order2 = STORE.find_order(order_id) or order
-base = q.message.caption or q.message.text or ""
-caption = _with_history_section_md(base + "\n\n✅ *پرداخت تایید شد.*", order2, limit=10)
-try:
-    await q.edit_message_caption(caption=caption, parse_mode="Markdown", reply_markup=None)
-except Exception:
+    # refresh admin message (receipt) with latest history/status
+    order2 = STORE.find_order(order_id) or order
+    base = q.message.caption or q.message.text or ""
+    caption = _with_history_section_md(base + "\n\n✅ *پرداخت تایید شد.*", order2, limit=10)
     try:
-        await q.edit_message_text(text=caption, parse_mode="Markdown", reply_markup=None)
+        await q.edit_message_caption(caption=caption, parse_mode="Markdown", reply_markup=None)
     except Exception:
-        pass
+        try:
+            await q.edit_message_text(text=caption, parse_mode="Markdown", reply_markup=None)
+        except Exception:
+            pass
 
 async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     q = update.callback_query
@@ -4550,24 +4550,23 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             )
 
         
-order2 = STORE.find_order(order_id) or order
-kb = _admin_receipt_kb(order2, order_id)
-base = q.message.caption or q.message.text or ""
-new_text = _with_history_section_md(base, order2, limit=10)
-try:
-    await q.edit_message_caption(caption=new_text, parse_mode="Markdown", reply_markup=kb)
-except Exception:
+    order2 = STORE.find_order(order_id) or order
+    kb = _admin_receipt_kb(order2, order_id)
+    base = q.message.caption or q.message.text or ""
+    new_text = _with_history_section_md(base, order2, limit=10)
     try:
-        await q.edit_message_text(text=new_text, parse_mode="Markdown", reply_markup=kb)
+        await q.edit_message_caption(caption=new_text, parse_mode="Markdown", reply_markup=kb)
     except Exception:
         try:
-            await q.edit_message_reply_markup(reply_markup=kb)
+            await q.edit_message_text(text=new_text, parse_mode="Markdown", reply_markup=kb)
         except Exception:
-            pass
-        await q.answer("ثبت شد ✅", show_alert=False)
-        return
+            try:
+                await q.edit_message_reply_markup(reply_markup=kb)
+            except Exception:
+                pass
+            await q.answer("ثبت شد ✅", show_alert=False)
+            return
 
-    
     if data.startswith("admin:shipcost:"):
         _, _, order_id = data.split(":", 2)
         await admin_shipcost_start(update, context, order_id)
