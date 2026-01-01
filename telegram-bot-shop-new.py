@@ -2569,507 +2569,485 @@ async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 #      روتر کلی دکمه ها 
 async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None :
     q = update.callback_query
-    data = ""
-    try:
-        await q.answer()  # پاسخ به کلیک اولیه برای حذف لودینگ
-    except Exception:
-        pass
-    try:
-        data = (q.data or "").strip()
+    await q.answer() # پاسخ به کلیک اولیه برای حذف لودینگ
+    data = (q.data or "").strip()
 
-        # 🔒 دسترسی به callback های ادمین
-        if (data.startswith("admin:") or data.startswith("ship:")) and not _is_admin_user(update):
-            try:
-                await q.answer("⛔️ دسترسی ندارید.", show_alert=True)
-            except Exception:
-                pass
+    # 🔒 دسترسی به callback های ادمین
+    if (data.startswith("admin:") or data.startswith("ship:")) and not _is_admin_user(update):
+        await q.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
+
+    if data == "admin:dashboard":
+        await admin_dashboard(update, context)
+        return
+ 
+
+    logger.info(f"Received callback data: {data}")
+    logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
+
+    if data == "menu:back_home":
+        await show_home_menu(update, context)
+        return
+        
+    if data == "menu:products":
+        await show_gender(update , context) ; return
+    
+    if data == "menu:cart":
+        await show_cart(update , context) ; return
+
+    if data == "menu:support":
+        await q.edit_message_text(" پشتیبانی: @amirmehdi_84_10", reply_markup=main_menu()) ; return
+        
+    
+
+    
+    # ---- shipping method callbacks ----
+    if data == "shipmethod:choose":
+        customer = context.user_data.get("customer", {})
+        selected = customer.get("shipping_method")
+        text = _build_checkout_summary_text(context)
+        try:
+            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
+        return
+    
+    if data.startswith("shipmethod:set:"):
+        _, _, method = data.split(":", 2)
+        if method not in SHIPPING_METHODS:
+            await q.answer("روش ارسال نامعتبر است.", show_alert=True)
             return
+        context.user_data.setdefault("customer", {})["shipping_method"] = method
+        # ✅ اگر سفارش قبلاً ساخته شده، روش ارسال داخل ORDER هم آپدیت شود
+        existing = context.user_data.get("current_order_id")
+        if existing and STORE.find_order(existing):
+            order = STORE.find_order(existing)
+            new_customer = dict(order.get("customer", {}))
+            new_customer["shipping_method"] = method
+            STORE.update_order(existing, shipping_method=method, customer=new_customer)
 
-        # ✅ هندل فوری «اقدام به پرداخت نهایی» (برای اینکه قبل از هر مسیر دیگری گیر نکند)
-        if data == "checkout:pay":
-            logger.info("checkout:pay clicked by chat_id=%s", getattr(update.effective_chat, 'id', None))
-            await checkout_pay(update, context)
-            return
-            if data == "admin:dashboard":
-                await admin_dashboard(update, context)
-                return
+        text = _build_checkout_summary_text(context)
+        # برگشت به خلاصه سفارش با کیبورد اصلی همان مرحله
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
+            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
+            [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
+            [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ])
+        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        await q.answer("روش ارسال ثبت شد ✅", show_alert=False)
+        info = SHIPPING_INFO.get(method, "هزینه ارسال بر عهده مشتری است.")
+        await q.answer(info, show_alert=True)
+        return
+    
+    if data == "shipmethod:back":
+        text = _build_checkout_summary_text(context)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
+            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
+            [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
+            [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ])
+        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        return
+    # ---- end shipping method callbacks ----
+    
+# ---- manual payment / receipt callbacks ----
+    if data.startswith("receipt:start:"):
+        _, _, order_id = data.split(":", 2)
+        await receipt_start(update, context, order_id)
+        return
 
+    if data == "receipt:cancel":
+        await receipt_cancel(update, context)
+        return
 
-            logger.info(f"Received callback data: {data}")
-            logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
+    if data.startswith("admin:approve:"):
+        _, _, order_id = data.split(":", 2)
+        await admin_approve(update, context, order_id)
+        return
 
-            if data == "menu:back_home":
-                await show_home_menu(update, context)
-                return
-
-            if data == "menu:products":
-                await show_gender(update , context) ; return
-
-            if data == "menu:cart":
-                await show_cart(update , context) ; return
-
-            if data == "menu:support":
-                await _safe_edit_or_send(q, context, " پشتیبانی: @amirmehdi_84_10",reply_markup=main_menu()) ; return
-
-
-
-
-            # ---- shipping method callbacks ----
-            if data == "shipmethod:choose":
-                customer = context.user_data.get("customer", {})
-                selected = customer.get("shipping_method")
-                text = _build_checkout_summary_text(context)
-                try:
-                    await _safe_edit_or_send(q, context, text,reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
-                except Exception:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
-                return
-
-            if data.startswith("shipmethod:set:"):
-                _, _, method = data.split(":", 2)
-                if method not in SHIPPING_METHODS:
-                    await q.answer("روش ارسال نامعتبر است.", show_alert=True)
-                    return
-                context.user_data.setdefault("customer", {})["shipping_method"] = method
-                # ✅ اگر سفارش قبلاً ساخته شده، روش ارسال داخل ORDER هم آپدیت شود
-                existing = context.user_data.get("current_order_id")
-                if existing and STORE.find_order(existing):
-                    order = STORE.find_order(existing)
-                    new_customer = dict(order.get("customer", {}))
-                    new_customer["shipping_method"] = method
-                    STORE.update_order(existing, shipping_method=method, customer=new_customer)
-
-                text = _build_checkout_summary_text(context)
-                # برگشت به خلاصه سفارش با کیبورد اصلی همان مرحله
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
-                    [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
-                    [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
-                    [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
-                    [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
-                ])
-                await _safe_edit_or_send(q, context, text,reply_markup=kb, parse_mode="Markdown")
-                await q.answer("روش ارسال ثبت شد ✅", show_alert=False)
-                info = SHIPPING_INFO.get(method, "هزینه ارسال بر عهده مشتری است.")
-                await q.answer(info, show_alert=True)
-                return
-
-            if data == "shipmethod:back":
-                text = _build_checkout_summary_text(context)
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
-                    [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
-                    [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
-                    [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
-                    [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
-                ])
-                await _safe_edit_or_send(q, context, text,reply_markup=kb, parse_mode="Markdown")
-                return
-            # ---- end shipping method callbacks ----
-
-        # ---- manual payment / receipt callbacks ----
-            if data.startswith("receipt:start:"):
-                _, _, order_id = data.split(":", 2)
-                await receipt_start(update, context, order_id)
-                return
-
-            if data == "receipt:cancel":
-                await receipt_cancel(update, context)
-                return
-
-            if data.startswith("admin:approve:"):
-                _, _, order_id = data.split(":", 2)
-                await admin_approve(update, context, order_id)
-                return
-
-            if data.startswith("admin:reject:"):
-                _, _, order_id = data.split(":", 2)
-                await admin_reject_start(update, context, order_id)
-                return
-            # ---- end manual payment / receipt callbacks ----
+    if data.startswith("admin:reject:"):
+        _, _, order_id = data.split(":", 2)
+        await admin_reject_start(update, context, order_id)
+        return
+    # ---- end manual payment / receipt callbacks ----
 
 
-        # **[تغییر]** شروع بخش هندلرهای سبد خرید
-            # ------------------ مدیریت سبد خرید ------------------
-            cart: List[Dict] = context.user_data.get("cart" , [])
+# **[تغییر]** شروع بخش هندلرهای سبد خرید
+    # ------------------ مدیریت سبد خرید ------------------
+    cart: List[Dict] = context.user_data.get("cart" , [])
+    
+    # ... هندلرهای cart:plus و cart:minus بدون تغییر نسبت به اصلاحیه قبلی ...
 
-            # ... هندلرهای cart:plus و cart:minus بدون تغییر نسبت به اصلاحیه قبلی ...
-
-            if data.startswith("cart:plus:"):
-                _, _, index_str = data.split(":", 2)
-                try:
-                    index = int(index_str)
-                    if 0 <= index < len(cart):
-                        item = cart[index]
-                        # ⭐️ (جدید) بررسی موجودی ⭐️
-                        max_qty = _get_item_inventory(item)
-
-                        if item["qty"] + 1 <= max_qty:
-                            if _update_cart_item_qty(cart, index, 1):
-                                await show_cart(update, context)
-                            else:
-                                await q.answer("❌ خطای افزایش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
-                        else:
-                            # ⭐️ (جدید) نمایش پیام محدودیت موجودی ⭐️
-                            await q.answer(
-                                f"❌ متأسفانه موجودی این کالا ({item['name']}) فقط {max_qty} عدد است و شما {item['qty']} عدد در سبد دارید.", 
-                                show_alert=True
-                            )
-                    else:
-                        await q.answer("❌ خطای افزایش تعداد. (آیتم نامعتبر)", show_alert=True)
-                except Exception:
-                    await q.answer("❌ خطای افزایش تعداد.", show_alert=True)
-                return
-
-            if data.startswith("cart:minus:"):
-                _, _, index_str = data.split(":", 2)
-                try:
-                    index = int(index_str)
-                    # توجه: اگر تعداد صفر شود، آیتم به طور خودکار حذف می‌شود.
-                    if _update_cart_item_qty(cart, index, -1):
+    if data.startswith("cart:plus:"):
+        _, _, index_str = data.split(":", 2)
+        try:
+            index = int(index_str)
+            if 0 <= index < len(cart):
+                item = cart[index]
+                # ⭐️ (جدید) بررسی موجودی ⭐️
+                max_qty = _get_item_inventory(item)
+                
+                if item["qty"] + 1 <= max_qty:
+                    if _update_cart_item_qty(cart, index, 1):
                         await show_cart(update, context)
                     else:
-                        await q.answer("❌ خطای کاهش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
-                except Exception:
-                    await q.answer("❌ خطای کاهش تعداد.", show_alert=True)
-                return
-
-            if data == "none":
-                await q.answer("این دکمه فقط تعداد فعلی/موجودی را نشان می‌دهد." , show_alert=False) ; return 
-
-            # ------------------ پایان بخش هندلرهای سبد خرید ------------------
-
-            if data.startswith("catalog:gender:"):
-                _, _, gender = data.split(":" , 2)
-                await show_categories(update , context , gender) ; return
-
-            if data.startswith("catalog:category:"):
-                parts = data.split(":" , 3)
-                _, _, gender , category_safe = parts
-                category = CATEGORY_MAP.get(category_safe , category_safe)
-                await show_products(update , context , gender , category) ; return
-
-            if data.startswith("catalog:select:"):
-                _, _, gender, category_safe, product_id = data.split(":", 4)
-                category = CATEGORY_MAP.get(category_safe , category_safe)
-                product = _find_product(gender , category , product_id)
-                if product and "variants" in product:
-                    await ask_color_and_size(update, context, gender, category, product_id)
+                        await q.answer("❌ خطای افزایش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
                 else:
-                    await ask_size_only(update , context , gender , category , product_id)
-                return
-
-
-            if data.startswith("catalog:sizeonly:"):
-                _, _, gender, category_safe, product_id = data.split(":", 4)
-                category = CATEGORY_MAP.get(category_safe , category_safe)
-                await ask_size_only(update, context, gender, category, product_id) ; return
-
-
-            if data.startswith("catalog:chooseonly:"):
-                _, _, gender, category_safe , product_id, size = data.split(":", 5)
-                category = CATEGORY_MAP.get(category_safe , category_safe)
-                # برای محصولات بدون رنگ، باید قیمت و موجودی را از خود محصول بگیریم
-                p = _find_product(gender, category, product_id)
-                if not p:
-                    await _safe_edit_or_send(q, context, "محصول پیدا نشد.",reply_markup=main_menu())
-                    return
-
-                context.user_data["pending"] = {
-                    "gender": gender,
-                    "category": category,
-                    "product_id": product_id,
-                    "name": p["name"],
-                    "size": size,
-                    "price": p["price"],
-                }
-                await show_qty_picker(update, context, size) ; return
-
-
-            if data.startswith("ship:packed:"):
-                _, _, order_id = data.split(":", 2)
-                order = STORE.find_order(order_id)
-                if not order:
-                    await q.answer("سفارش پیدا نشد", show_alert=True)
-                    return
-
-                STORE.update_order(order_id, shipping_status="packed")
-                _order_log(order_id, "admin", "بسته‌بندی شد.")
-
-            # پیام به مشتری
-                await context.bot.send_message(
-                    chat_id=int(order["user_chat_id"]),
-                    text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
-                    parse_mode="Markdown",
-                    reply_markup=main_menu_reply()
-                )
-
-            # ✅ پیام به ادمین
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=(
-                        f"✅ انجام شد.\n"
-                        f"سفارش `{order_id}` «بسته‌بندی شد» و پیام برای مشتری ارسال شد."
-                    ),
-                    parse_mode="Markdown",
-                    reply_markup=admin_panel_keyboard(order_id)
-                )
-
-                await q.answer("ثبت شد ✅")
-                return
-
-
-            if data.startswith("ship:need_track:"):
-                _, _, order_id = data.split(":", 2)
-                context.bot_data.setdefault("admin_pending_tracking", {})[update.effective_chat.id] = {"order_id": order_id}
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="🔎 لطفاً کد رهگیری پست را تایپ کنید:"
-                )
-                await q.answer("منتظر کد رهگیری…", show_alert=False)
-                return
-
-
-            if data.startswith("admin:msg:"):
-                _, _, order_id = data.split(":", 2)
-                context.bot_data.setdefault("admin_pending_msg", {})[update.effective_chat.id] = {"order_id": order_id}
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:"
-                )
-
-                await q.answer("منتظر پیام…", show_alert=False)
-                return
-
-
-
-            if data.startswith("catalog:choose:"):
-                parts = data.split(":", 6)
-                if len(parts) != 7:
-                    await _safe_edit_or_send(q, context, "داده انتخاب محصول ناقص است.",reply_markup=main_menu())
-                    return
-                _, _, gender, category_safe, product_id, color_index_str, size = parts
-                category = CATEGORY_MAP.get(category_safe, category_safe)
-
-                p = _find_product(gender, category, product_id)
-                if not p or "variants" not in p:
-                    await _safe_edit_or_send(q, context, "محصول پیدا نشد.",reply_markup=main_menu())
-                    return
-
-                try:
-                    color_index = int(color_index_str)
-                    colors = list(p["variants"].keys())
-                    if color_index < 0 or color_index >= len(colors):
-                        raise ValueError("Invalid color index")
-                    color = colors[color_index]
-                except (ValueError, IndexError):
-                    await _safe_edit_or_send(q, context, "رنگ انتخابی معتبر نیست.",reply_markup=main_menu())
-                    return
-
-                await show_qty_picker_combined(update, context, gender, category, product_id, color, size)
-                return
-
-
-            # این بخش برای یک روال قدیمی‌تر است که در ask_color_and_size کنونی استفاده نمی‌شود
-            if data.startswith("catalog:color:"):
-                _, _, gender, category_safe, product_id, color_safe = data.split(":", 5)
-                category = CATEGORY_MAP.get(category_safe, category_safe)
-
-                p = _find_product(gender, category, product_id)
-                if not p or "variants" not in p:
-                    await _safe_edit_or_send(q, context, "محصول پیدا نشد.",reply_markup=main_menu())
-                    return
-
-                color = _unsafe_color(color_safe, p["variants"])
-                if not color:
-                    await _safe_edit_or_send(q, context, "رنگ انتخابی معتبر نیست.",reply_markup=main_menu())
-                    return
-
-                await after_color_ask_size(update, context, gender, category, product_id, color)
-                return
-
-            if data.startswith("catalog:size:"):
-                _, _, chosen_size = data.split(":" , 2)
-                await show_qty_picker(update, context, chosen_size) ; return
-
-
-
-            if data == "qty:inc":
-                pend = context.user_data.get("pending")
-                if not pend:
-                    await q.answer("خطا در انجام عملیات" , show_alert=True)
-                    return
-                if pend["qty"] < pend["available"]:
-                    pend["qty"] += 1
-                else:
-                    await q.answer("به حداکثر موجودی فروشگاه رسیدی" , show_alert=False)
-
-                cap = (
-                    f"{pend['name']}"
-                    f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
-                    f"\nموجودی:{pend['available']}"
-                    f"\nقیمت واحد : {_ftm_toman(pend['price'])}"
-                    f"\nقیمت نهایی: {_ftm_toman(pend['price'] * pend['qty'])}"
-                )
-                try:
-                    # سعی در ویرایش کپشن (اگر پیام قبلی عکس‌دار باشد)
-                    await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-                except Exception:
-                    # اگر نشد، پیام را به صورت متنی ویرایش کن
-                    await _safe_edit_or_send(q, context, text=cap,reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-                return
-
-
-            if data == "qty:dec":
-                pend = context.user_data.get("pending")
-                if not pend:
-                    await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
-                if pend["qty"] > 1 :
-                    pend["qty"] -= 1
-                else:
-                    await q.answer("حداقل تعداد 1 است ", show_alert=False)
-                cap = (
-                    f"{pend['name']}"
-                    f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
-                    f"\nموجودی:{pend['available']}"
-                    f"\nقیمت واحد:{_ftm_toman(pend['price'])}"
-                    f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend['qty'])}"
-                )
-                try:
-                    await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-                except Exception:
-                    await _safe_edit_or_send(q, context, text=cap,reply_markup=qty_keyboard(pend["qty"], pend["available"]))
-                return
-
-            if data == "qty:add":
-                pend = context.user_data.get("pending")
-                if not pend:
-                    await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
-                item = {
-                    "product_id" : pend["product_id"] ,
-                    "gender" : pend["gender"] , 
-                    "category" : pend["category"] , 
-                    "name" : pend["name"] , 
-                    "color" : pend.get("color") , 
-                    "size" : pend.get("size") , 
-                    "qty" : pend["qty"] , 
-                    "price" : pend["price"] ,  
-                }
-                cart = context.user_data.setdefault("cart" , [])
-                _merge_cart_item(cart , item)
-                context.user_data.pop("pending" , None)
-
-                # 🟢 تغییر: افزودن پیام هشدار (درخواستی کاربر)
-                warning_message = (
-                    "✅ مشتری گرامی، **کالا مورد نظر به سبد خرید شما اضافه شده**.\n\n"
-                    "⚠️ **لطفاً توجه داشته باشید** که تا پرداخت نهایی، کالا متعلق به شما نمی‌باشد و "
-                    "اگر مشتری دیگری زودتر پرداخت را انجام دهد، متأسفانه کالا برای ایشان ثبت می‌شود و "
-                    "گاهی ممکن است همان لحظه موجودی فروشگاه تمام شود.\n\n"
-                    "با تشکر، مدیریت فروشگاه ..."
-                )
-
-                await context.bot.send_message(
-                    chat_id=q.message.chat_id,
-                    text=warning_message,
-                    parse_mode="Markdown"
-                )
-                # ----------------------------------------------------
-
-                txt = "می‌تونی به خرید ادامه بدی یا سبد خرید رو مشاهده کنی"
-                await q.message.reply_text(
-                    txt,
-                    reply_markup = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
-                        [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
-                    ])
-                )
-                return
-
-            if data == "qty:noop":
-                await q.answer("---" , show_alert=False) ; return
-
-
-
-            if data == "flow:cancel":
-                """
-                انصراف از جریان انتخاب محصول (سایز/تعداد).
-                خواستهٔ شما: پیام انتخاب محصول/تعداد (همین پیام فعلی) پاک شود و سپس صفحهٔ قبلی نمایش داده شود.
-                """
-                pend = context.user_data.get("pending") or {}
-                gender = pend.get("gender")
-                category = pend.get("category")
-
-                # پاکسازی وضعیت انتخاب فعلی
-                context.user_data.pop("pending", None)
-                context.user_data["awaiting"] = None
-
-                # ✅ پاک کردن پیام فعلی (پیام محصول/انتخاب سایز/تعداد)
-                try:
-                    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.callback_query.message.message_id)
-                except Exception:
-                    pass
-
-                # برگشت به مرحله مناسب
-                if gender and category:
-                    await show_products(update, context, gender, category)
-                else:
-                    await show_cart(update, context)
-                return
-
-
-            # checkout:begin توسط ConversationHandler در entry_points مدیریت می‌شود.
-            # اگر این کد اجرا شود، یعنی ConversationHandler موفق به آغاز نشده است.
-            if data == "checkout:begin":
-                await q.answer("❌ خطا در اجرای فرم. لطفاً یک بار دیگر تلاش کنید.", show_alert=True)
+                    # ⭐️ (جدید) نمایش پیام محدودیت موجودی ⭐️
+                    await q.answer(
+                        f"❌ متأسفانه موجودی این کالا ({item['name']}) فقط {max_qty} عدد است و شما {item['qty']} عدد در سبد دارید.", 
+                        show_alert=True
+                    )
+            else:
+                await q.answer("❌ خطای افزایش تعداد. (آیتم نامعتبر)", show_alert=True)
+        except Exception:
+            await q.answer("❌ خطای افزایش تعداد.", show_alert=True)
+        return
+        
+    if data.startswith("cart:minus:"):
+        _, _, index_str = data.split(":", 2)
+        try:
+            index = int(index_str)
+            # توجه: اگر تعداد صفر شود، آیتم به طور خودکار حذف می‌شود.
+            if _update_cart_item_qty(cart, index, -1):
                 await show_cart(update, context)
-                return
+            else:
+                await q.answer("❌ خطای کاهش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
+        except Exception:
+            await q.answer("❌ خطای کاهش تعداد.", show_alert=True)
+        return
+    
+    if data == "none":
+        await q.answer("این دکمه فقط تعداد فعلی/موجودی را نشان می‌دهد." , show_alert=False) ; return 
+        
+    # ------------------ پایان بخش هندلرهای سبد خرید ------------------
+    
+    if data.startswith("catalog:gender:"):
+        _, _, gender = data.split(":" , 2)
+        await show_categories(update , context , gender) ; return
+        
+    if data.startswith("catalog:category:"):
+        parts = data.split(":" , 3)
+        _, _, gender , category_safe = parts
+        category = CATEGORY_MAP.get(category_safe , category_safe)
+        await show_products(update , context , gender , category) ; return
+    
+    if data.startswith("catalog:select:"):
+        _, _, gender, category_safe, product_id = data.split(":", 4)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
+        product = _find_product(gender , category , product_id)
+        if product and "variants" in product:
+            await ask_color_and_size(update, context, gender, category, product_id)
+        else:
+            await ask_size_only(update , context , gender , category , product_id)
+        return
+        
+    
+    if data.startswith("catalog:sizeonly:"):
+        _, _, gender, category_safe, product_id = data.split(":", 4)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
+        await ask_size_only(update, context, gender, category, product_id) ; return
+        
+    
+    if data.startswith("catalog:chooseonly:"):
+        _, _, gender, category_safe , product_id, size = data.split(":", 5)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
+        # برای محصولات بدون رنگ، باید قیمت و موجودی را از خود محصول بگیریم
+        p = _find_product(gender, category, product_id)
+        if not p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+            
+        context.user_data["pending"] = {
+            "gender": gender,
+            "category": category,
+            "product_id": product_id,
+            "name": p["name"],
+            "size": size,
+            "price": p["price"],
+        }
+        await show_qty_picker(update, context, size) ; return
 
 
-            if data == "checkout:pay":
-                await checkout_pay(update , context) ; return
+    if data.startswith("ship:packed:"):
+        _, _, order_id = data.split(":", 2)
+        order = STORE.find_order(order_id)
+        if not order:
+            await q.answer("سفارش پیدا نشد", show_alert=True)
+            return
 
-            # نیاز به هندلر برای لغو سفارش
-            if data == "checkout:cancel":
-                oid = context.user_data.get("active_order_id") or context.user_data.get("awaiting_receipt")
-                if oid:
-                    _release_inventory_for_order(oid, reason="کاربر سفارش را لغو کرد و رزرو آزاد شد.")
-                    STORE.update_order(oid, status="cancelled", cancel_reason="user_cancelled")
+        STORE.update_order(order_id, shipping_status="packed")
+        _order_log(order_id, "admin", "بسته‌بندی شد.")
 
-                context.user_data.pop("active_order_id", None)
-                context.user_data.pop("awaiting_receipt", None)
-                context.user_data.pop("current_order_id", None)
-                context.user_data.pop("cart" , None)
-                context.user_data.pop("customer" , None)
-                context.user_data.pop("pending" , None)
-                context.user_data['awaiting'] = None
-                await _safe_edit_or_send(q, context, "❌ سفارش لغو شد. سبد خرید خالی شد.",reply_markup=main_menu())
+    # پیام به مشتری
+        await context.bot.send_message(
+            chat_id=int(order["user_chat_id"]),
+            text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
+            parse_mode="Markdown",
+            reply_markup=main_menu_reply()
+        )
 
-        # ✅ بازگرداندن منوی اصلی (Reply Keyboard)
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="از منوی پایین می‌تونی ادامه بدی.",
-                    reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)),
-                )
-                return
+    # ✅ پیام به ادمین
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=(
+                f"✅ انجام شد.\n"
+                f"سفارش `{order_id}` «بسته‌بندی شد» و پیام برای مشتری ارسال شد."
+            ),
+            parse_mode="Markdown",
+            reply_markup=admin_panel_keyboard(order_id)
+        )
 
-            if data.startswith("checkout:verify:"):
-                _, _, order_id = data.split(":", 2)
-                await checkout_verify(update, context, order_id); return
+        await q.answer("ثبت شد ✅")
+        return
 
+    
+    if data.startswith("ship:need_track:"):
+        _, _, order_id = data.split(":", 2)
+        context.bot_data.setdefault("admin_pending_tracking", {})[update.effective_chat.id] = {"order_id": order_id}
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🔎 لطفاً کد رهگیری پست را تایپ کنید:"
+        )
+        await q.answer("منتظر کد رهگیری…", show_alert=False)
+        return
 
-            await _safe_edit_or_send(q, context, "❌ گزینه نامعتبر.",reply_markup=main_menu())
+    
+    if data.startswith("admin:msg:"):
+        _, _, order_id = data.split(":", 2)
+        context.bot_data.setdefault("admin_pending_msg", {})[update.effective_chat.id] = {"order_id": order_id}
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:"
+        )
 
-    except Exception as e:
-        logger.exception("menu_router error (data=%s): %s", data, e)
-        # به کاربر پیام بده تا بداند کلیک ثبت شده ولی خطا رخ داده
+        await q.answer("منتظر پیام…", show_alert=False)
+        return
+
+    
+    
+    if data.startswith("catalog:choose:"):
+        parts = data.split(":", 6)
+        if len(parts) != 7:
+            await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
+            return
+        _, _, gender, category_safe, product_id, color_index_str, size = parts
+        category = CATEGORY_MAP.get(category_safe, category_safe)
+    
+        p = _find_product(gender, category, product_id)
+        if not p or "variants" not in p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+    
         try:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطای داخلی رخ داد. لطفاً دوباره تلاش کنید.")
+            color_index = int(color_index_str)
+            colors = list(p["variants"].keys())
+            if color_index < 0 or color_index >= len(colors):
+                raise ValueError("Invalid color index")
+            color = colors[color_index]
+        except (ValueError, IndexError):
+            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            return
+    
+        await show_qty_picker_combined(update, context, gender, category, product_id, color, size)
+        return
+        
+       
+    # این بخش برای یک روال قدیمی‌تر است که در ask_color_and_size کنونی استفاده نمی‌شود
+    if data.startswith("catalog:color:"):
+        _, _, gender, category_safe, product_id, color_safe = data.split(":", 5)
+        category = CATEGORY_MAP.get(category_safe, category_safe)
+    
+        p = _find_product(gender, category, product_id)
+        if not p or "variants" not in p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+    
+        color = _unsafe_color(color_safe, p["variants"])
+        if not color:
+            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            return
+    
+        await after_color_ask_size(update, context, gender, category, product_id, color)
+        return
+        
+    if data.startswith("catalog:size:"):
+        _, _, chosen_size = data.split(":" , 2)
+        await show_qty_picker(update, context, chosen_size) ; return
+        
+    
+
+    if data == "qty:inc":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True)
+            return
+        if pend["qty"] < pend["available"]:
+            pend["qty"] += 1
+        else:
+            await q.answer("به حداکثر موجودی فروشگاه رسیدی" , show_alert=False)
+        
+        cap = (
+            f"{pend['name']}"
+            f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
+            f"\nموجودی:{pend['available']}"
+            f"\nقیمت واحد : {_ftm_toman(pend['price'])}"
+            f"\nقیمت نهایی: {_ftm_toman(pend['price'] * pend['qty'])}"
+        )
+        try:
+            # سعی در ویرایش کپشن (اگر پیام قبلی عکس‌دار باشد)
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        except Exception:
+            # اگر نشد، پیام را به صورت متنی ویرایش کن
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        return
+    
+    
+    if data == "qty:dec":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
+        if pend["qty"] > 1 :
+            pend["qty"] -= 1
+        else:
+            await q.answer("حداقل تعداد 1 است ", show_alert=False)
+        cap = (
+            f"{pend['name']}"
+            f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
+            f"\nموجودی:{pend['available']}"
+            f"\nقیمت واحد:{_ftm_toman(pend['price'])}"
+            f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend['qty'])}"
+        )
+        try:
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        except Exception:
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        return
+    
+    if data == "qty:add":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
+        item = {
+            "product_id" : pend["product_id"] ,
+            "gender" : pend["gender"] , 
+            "category" : pend["category"] , 
+            "name" : pend["name"] , 
+            "color" : pend.get("color") , 
+            "size" : pend.get("size") , 
+            "qty" : pend["qty"] , 
+            "price" : pend["price"] ,  
+        }
+        cart = context.user_data.setdefault("cart" , [])
+        _merge_cart_item(cart , item)
+        context.user_data.pop("pending" , None)
+
+        # 🟢 تغییر: افزودن پیام هشدار (درخواستی کاربر)
+        warning_message = (
+            "✅ مشتری گرامی، **کالا مورد نظر به سبد خرید شما اضافه شده**.\n\n"
+            "⚠️ **لطفاً توجه داشته باشید** که تا پرداخت نهایی، کالا متعلق به شما نمی‌باشد و "
+            "اگر مشتری دیگری زودتر پرداخت را انجام دهد، متأسفانه کالا برای ایشان ثبت می‌شود و "
+            "گاهی ممکن است همان لحظه موجودی فروشگاه تمام شود.\n\n"
+            "با تشکر، مدیریت فروشگاه ..."
+        )
+        
+        await context.bot.send_message(
+            chat_id=q.message.chat_id,
+            text=warning_message,
+            parse_mode="Markdown"
+        )
+        # ----------------------------------------------------
+
+        txt = "می‌تونی به خرید ادامه بدی یا سبد خرید رو مشاهده کنی"
+        await q.message.reply_text(
+            txt,
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
+                [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
+            ])
+        )
+        return
+
+    if data == "qty:noop":
+        await q.answer("---" , show_alert=False) ; return
+    
+
+    
+    if data == "flow:cancel":
+        """
+        انصراف از جریان انتخاب محصول (سایز/تعداد).
+        خواستهٔ شما: پیام انتخاب محصول/تعداد (همین پیام فعلی) پاک شود و سپس صفحهٔ قبلی نمایش داده شود.
+        """
+        pend = context.user_data.get("pending") or {}
+        gender = pend.get("gender")
+        category = pend.get("category")
+
+        # پاکسازی وضعیت انتخاب فعلی
+        context.user_data.pop("pending", None)
+        context.user_data["awaiting"] = None
+
+        # ✅ پاک کردن پیام فعلی (پیام محصول/انتخاب سایز/تعداد)
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.callback_query.message.message_id)
         except Exception:
             pass
-        try:
-            await q.answer("❌ خطای داخلی", show_alert=True)
-        except Exception:
-            pass
+
+        # برگشت به مرحله مناسب
+        if gender and category:
+            await show_products(update, context, gender, category)
+        else:
+            await show_cart(update, context)
+        return
+
+
+    # checkout:begin توسط ConversationHandler در entry_points مدیریت می‌شود.
+    # اگر این کد اجرا شود، یعنی ConversationHandler موفق به آغاز نشده است.
+    if data == "checkout:begin":
+        await q.answer("❌ خطا در اجرای فرم. لطفاً یک بار دیگر تلاش کنید.", show_alert=True)
+        await show_cart(update, context)
+        return
+    
+
+    if data == "checkout:pay":
+        await checkout_pay(update , context) ; return
+    
+    # نیاز به هندلر برای لغو سفارش
+    if data == "checkout:cancel":
+        oid = context.user_data.get("active_order_id") or context.user_data.get("awaiting_receipt")
+        if oid:
+            _release_inventory_for_order(oid, reason="کاربر سفارش را لغو کرد و رزرو آزاد شد.")
+            STORE.update_order(oid, status="cancelled", cancel_reason="user_cancelled")
+
+        context.user_data.pop("active_order_id", None)
+        context.user_data.pop("awaiting_receipt", None)
+        context.user_data.pop("current_order_id", None)
+        context.user_data.pop("cart" , None)
+        context.user_data.pop("customer" , None)
+        context.user_data.pop("pending" , None)
+        context.user_data['awaiting'] = None
+        await q.edit_message_text("❌ سفارش لغو شد. سبد خرید خالی شد.", reply_markup=main_menu())
+
+# ✅ بازگرداندن منوی اصلی (Reply Keyboard)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="از منوی پایین می‌تونی ادامه بدی.",
+            reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)),
+        )
+        return
+
+    if data.startswith("checkout:verify:"):
+        _, _, order_id = data.split(":", 2)
+        await checkout_verify(update, context, order_id); return
+    
+
+    await q.edit_message_text("❌ گزینه نامعتبر.", reply_markup=main_menu())
+
+
 #        /start و اجرای برنامه
 # ساخت اپلیکیشن PTB
 application = Application.builder().token(BOT_TOKEN).build()
