@@ -31,6 +31,65 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
 CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277"} , {"holder":"امیرمهدی پیری" , "number": "5859831211429799"}]
 ADMIN_USERNAME = "@Amirmehdi_84_11"
 
+# ------------------ Admin access control ------------------
+# فقط یوزرهایی که در این لیست هستند اجازه دارند /admin بزنند و به قابلیت‌های ادمین دسترسی داشته باشند.
+# پیش‌فرض از مقدار ADMIN_USERNAME استفاده می‌شود. برای چند ادمین می‌توانید از env استفاده کنید:
+#   ADMIN_USERNAMES="Amirmehdi_84_11,OtherUser"
+#   ADMIN_USER_IDS="123456789,987654321"
+# برای چند چت ادمین جهت دریافت رسید/هشدار هم می‌توانید env بدهید:
+#   ADMIN_CHAT_IDS="11111111,22222222"
+# اما ساده‌ترین روش این است که هر ادمین یک‌بار در چت خصوصی خودش /admin بزند.
+
+def _normalize_username(u: Optional[str]) -> str:
+    u = (u or "").strip()
+    if u.startswith("@"):
+        u = u[1:]
+    return u.lower()
+
+_allowed_admin_usernames = set()
+if ADMIN_USERNAME:
+    _allowed_admin_usernames.add(_normalize_username(ADMIN_USERNAME))
+
+_env_admin_usernames = os.getenv("ADMIN_USERNAMES", "").strip()
+if _env_admin_usernames:
+    for _u in _env_admin_usernames.split(","):
+        _u = _normalize_username(_u)
+        if _u:
+            _allowed_admin_usernames.add(_u)
+
+_allowed_admin_user_ids = set()
+_env_admin_user_ids = os.getenv("ADMIN_USER_IDS", "").strip()
+if _env_admin_user_ids:
+    for _x in _env_admin_user_ids.split(","):
+        _x = _x.strip()
+        if not _x:
+            continue
+        try:
+            _allowed_admin_user_ids.add(int(_x))
+        except Exception:
+            pass
+
+def _is_admin_user(update: Update) -> bool:
+    user = update.effective_user
+    if not user:
+        return False
+    if user.id in _allowed_admin_user_ids:
+        return True
+    uname = _normalize_username(getattr(user, "username", None))
+    return bool(uname and uname in _allowed_admin_usernames)
+
+def _is_admin_user_from_message(msg) -> bool:
+    user = getattr(msg, "from_user", None)
+    if not user:
+        return False
+    if user.id in _allowed_admin_user_ids:
+        return True
+    uname = _normalize_username(getattr(user, "username", None))
+    return bool(uname and uname in _allowed_admin_usernames)
+
+# ----------------------------------------------------------
+
+
 
 def _safe_callback(val):
     import re
@@ -108,10 +167,86 @@ STORE = Storge()
 if not ADMIN_CHAT_ID:
     try:
         ADMIN_CHAT_ID = STORE.data.get("admin_chat_id") or None
+        # پشتیبانی از چند ادمین (لیست)
+        if not ADMIN_CHAT_ID:
+            _ids = STORE.data.get("admin_chat_ids") or []
+            if isinstance(_ids, list) and _ids:
+                ADMIN_CHAT_ID = str(_ids[0])
     except Exception:
         ADMIN_CHAT_ID = None
 
 
+
+
+# ------------------ Admin chat receivers (multi-admin) ------------------
+def _get_admin_chat_ids() -> List[int]:
+    """
+    لیست چت‌های ادمین که باید رسید/هشدارها به آنها ارسال شود.
+    منابع:
+      - env ADMIN_CHAT_ID (تک مقدار)
+      - env ADMIN_CHAT_IDS (چند مقدار، جداشده با ,)
+      - storage admin_chat_id (قدیمی)
+      - storage admin_chat_ids (جدید: لیست)
+    """
+    ids = set()
+
+    # env (single)
+    if ADMIN_CHAT_ID:
+        try:
+            ids.add(int(ADMIN_CHAT_ID))
+        except Exception:
+            pass
+
+    # env (multi)
+    env_multi = os.getenv("ADMIN_CHAT_IDS", "").strip()
+    if env_multi:
+        for part in env_multi.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                ids.add(int(part))
+            except Exception:
+                pass
+
+    # storage
+    try:
+        single = STORE.data.get("admin_chat_id")
+        if single:
+            try:
+                ids.add(int(single))
+            except Exception:
+                pass
+        lst = STORE.data.get("admin_chat_ids") or []
+        if isinstance(lst, list):
+            for x in lst:
+                try:
+                    ids.add(int(x))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    return sorted(ids)
+
+def _has_admin_chat() -> bool:
+    return len(_get_admin_chat_ids()) > 0
+
+async def _broadcast_admin_message(context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> None:
+    for cid in _get_admin_chat_ids():
+        try:
+            await context.bot.send_message(chat_id=cid, text=text, **kwargs)
+        except Exception as e:
+            logger.error("Failed to notify admin chat %s: %s", cid, e)
+
+async def _broadcast_admin_photo(context: ContextTypes.DEFAULT_TYPE, photo, **kwargs) -> None:
+    for cid in _get_admin_chat_ids():
+        try:
+            await context.bot.send_photo(chat_id=cid, photo=photo, **kwargs)
+        except Exception as e:
+            logger.error("Failed to send photo to admin chat %s: %s", cid, e)
+
+# ------------------------------------------------------------------------
 
 #        catalog
 CATALOG: Dict[str,Dict[str,List[Dict]]] = {
@@ -264,13 +399,15 @@ SHIP_STATUS_FA = {
 
 #     منوها
 
-def main_menu_reply() -> ReplyKeyboardMarkup:
+def main_menu_reply(is_admin: bool = False) -> ReplyKeyboardMarkup:
     """ساخت کیبورد Reply برای منو اصلی (پایین صفحه)"""
     keyboard = [
-        ["🛍️ لیست محصولات", "🧺 سبد خرید"] , 
+        ["🛍️ لیست محصولات", "🧺 سبد خرید"],
         ["📦 وضعیت سفارش من"],
-        ["🆘 پشتیبانی"]
+        ["🆘 پشتیبانی"],
     ]
+    if is_admin:
+        keyboard.append(["📊 داشبورد فروش"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 def form_keyboard() -> ReplyKeyboardMarkup:
@@ -675,9 +812,9 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
              await context.bot.send_message(update.effective_chat.id, text)
              
         # ارسال یک پیام جدید با Reply Keyboard
-        await q.message.reply_text(text , reply_markup=main_menu_reply())
+        await q.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
     else:
-        await update.message.reply_text(text , reply_markup=main_menu_reply())
+        await update.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
 
 
 #     نمایش مراحل
@@ -685,27 +822,48 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
 
 # --- Admin registration helpers ---
 async def admin_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Register current chat as admin chat. Run this from the admin account in a private chat with the bot."""
+    """Register current chat as admin chat (برای دریافت رسیدها و هشدارها). فقط ادمین‌های مجاز."""
+    if not update.message:
+        return
+
+    # 🔒 جلوگیری از ادمین شدن افراد ناشناس
+    if not _is_admin_user(update):
+        await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        return
+
     global ADMIN_CHAT_ID
     chat_id = update.effective_chat.id
     ADMIN_CHAT_ID = str(chat_id)
     try:
-        STORE.data["admin_chat_id"] = str(chat_id)
+        # ذخیره چند ادمین (لیست) + سازگاری با کلید قدیمی admin_chat_id
+        lst = STORE.data.get("admin_chat_ids") or []
+        if not isinstance(lst, list):
+            lst = [lst] if lst else []
+
+        legacy = STORE.data.get("admin_chat_id")
+        if legacy and str(legacy) not in [str(x) for x in lst]:
+            lst.append(str(legacy))
+
+        if str(chat_id) not in [str(x) for x in lst]:
+            lst.append(str(chat_id))
+
+        STORE.data["admin_chat_ids"] = lst
+        STORE.data["admin_chat_id"] = str(chat_id)  # legacy
         STORE.save()
     except Exception:
         pass
+
     await update.message.reply_text(
         f"✅ ادمین ثبت شد. از این به بعد رسیدها به این چت ارسال می‌شوند.\nAdminChatID: {chat_id}",
-        reply_markup=main_menu_reply()
+        reply_markup=main_menu_reply(is_admin=True)
     )
-
 
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """داشبورد فروش روزانه/هفتگی/ماهیانه (فقط ادمین)."""
-    admin_id = _ensure_admin_chat_id()
-    if not admin_id or update.effective_chat.id != admin_id:
+    # 🔒 فقط ادمین‌های مجاز
+    if not _is_admin_user(update):
         if update.message:
-            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply())
+            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
         elif update.callback_query:
             await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
         return
@@ -1243,7 +1401,7 @@ async def show_my_order_status(update: Update, context: ContextTypes.DEFAULT_TYP
 
     mine = [o for o in orders if int(o.get("user_chat_id", 0)) == int(chat_id)]
     if not mine:
-        await update.message.reply_text("هنوز سفارشی برای شما ثبت نشده است.", reply_markup=main_menu_reply())
+        await update.message.reply_text("هنوز سفارشی برای شما ثبت نشده است.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
         return
 
     # آخرین سفارش
@@ -1268,7 +1426,7 @@ async def show_my_order_status(update: Update, context: ContextTypes.DEFAULT_TYP
         text += f"\nآخرین تغییر: {h.get('text')}"
 
 
-    await update.message.reply_text(text, reply_markup=main_menu_reply())
+    await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
 
 
 
@@ -1291,6 +1449,13 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     elif text == "📦 وضعیت سفارش من":
         await show_my_order_status(update, context)
+
+    elif text == "📊 داشبورد فروش":
+        if not _is_admin_user(update):
+            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+            return
+        await admin_dashboard(update, context)
+
 
 
 async def begin_customer_form(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1336,7 +1501,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("customer", None)
         context.user_data.pop("pending", None)
         context.user_data["awaiting"] = None
-        await update.message.reply_text("❌ فرم لغو شد. از منوی پایین استفاده کن.", reply_markup=main_menu_reply())
+        await update.message.reply_text("❌ فرم لغو شد. از منوی پایین استفاده کن.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
         # بازگشت به سبد (اختیاری)
         await show_cart(update, context)
         return ConversationHandler.END
@@ -1420,6 +1585,12 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     else: # اگر مستقیماً یک Message object باشد (مثل update.message)
         chat_id = update_or_msg.chat.id
     
+    # آیا این کاربر ادمین مجاز است؟ (برای نمایش گزینه داشبورد در Reply Keyboard)
+    if isinstance(update_or_msg, Update):
+        is_admin = _is_admin_user(update_or_msg)
+    else:
+        is_admin = _is_admin_user_from_message(update_or_msg)
+
     send = context.bot.send_message
     
     cart = context.user_data.get("cart" , [])
@@ -1472,7 +1643,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     m = await context.bot.send_message(
         chat_id=chat_id,
         text="✅فرم مشخصات تکمیل شد.",
-        reply_markup=main_menu_reply(),
+        reply_markup=main_menu_reply(is_admin=is_admin),
     )
     context.user_data["form_done_msg_id"] = m.message_id
 
@@ -1530,10 +1701,9 @@ def _make_order_id() -> str:
 
 
 def _ensure_admin_chat_id() -> Optional[int]:
-    try:
-        return int(ADMIN_CHAT_ID) if ADMIN_CHAT_ID else None
-    except Exception:
-        return None
+    """(سازگاری) اولین چت ادمین ثبت‌شده را برمی‌گرداند."""
+    ids = _get_admin_chat_ids()
+    return ids[0] if ids else None
 
 def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
     """Create (or reuse) an order id for current user's cart+customer."""
@@ -1575,6 +1745,14 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
 
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     """Send card number (copyable) + request receipt."""
+    # 🧹 حذف پیام «فرم مشخصات تکمیل شد» تا زیر پیام پرداخت نمایش داده نشود
+    mid = context.user_data.pop("form_done_msg_id", None)
+    if mid:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=int(mid))
+        except Exception:
+            pass
+
     total = 0
     order = STORE.find_order(order_id)
     if order:
@@ -1663,7 +1841,7 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     order = STORE.find_order(order_id)
     if not order:
         context.user_data.pop("awaiting_receipt", None)
-        await update.message.reply_text("❌ سفارش پیدا نشد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu_reply())
+        await update.message.reply_text("❌ سفارش پیدا نشد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
         return
 
     # take best quality
@@ -1679,14 +1857,15 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         reply_markup=main_menu_reply()
     )
 
-    admin_id = _ensure_admin_chat_id()
-    if not admin_id:
+    admin_ids = _get_admin_chat_ids()
+    if not admin_ids:
         # admin not registered yet
         await update.message.reply_text(
             f"⚠️ ادمین هنوز در ربات ثبت نشده است. لطفاً به ادمین ({ADMIN_USERNAME}) اطلاع دهید داخل ربات دستور /admin را بزند.",
             reply_markup=main_menu_reply()
         )
         return
+
 
     # build order summary for admin
     lines = []
@@ -1716,8 +1895,8 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     ])
 
     try:
-        await context.bot.send_photo(
-            chat_id=admin_id,
+        await _broadcast_admin_photo(
+            context,
             photo=file_id,
             caption=admin_text,
             parse_mode="Markdown",
@@ -1731,10 +1910,11 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
     q = update.callback_query
     await q.answer()
 
-    admin_id = _ensure_admin_chat_id()
-    if not admin_id or q.message.chat_id != admin_id:
+    # 🔒 فقط ادمین‌های مجاز
+    if not _is_admin_user(update):
         await q.answer("دسترسی ندارید.", show_alert=True)
         return
+
 
     order = STORE.find_order(order_id)
     if not order:
@@ -1780,10 +1960,11 @@ async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
     q = update.callback_query
     await q.answer()
 
-    admin_id = _ensure_admin_chat_id()
-    if not admin_id or q.message.chat_id != admin_id:
+    # 🔒 فقط ادمین‌های مجاز
+    if not _is_admin_user(update):
         await q.answer("دسترسی ندارید.", show_alert=True)
         return
+
 
     order = STORE.find_order(order_id)
     if not order:
@@ -1791,10 +1972,11 @@ async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
         return
 
     # mark pending admin reply in bot_data (shared)
-    context.bot_data["admin_pending_reply"] = {
+    # mark pending admin reply in bot_data (per admin chat)
+    pend_map = context.bot_data.setdefault("admin_pending_reply", {})
+    pend_map[update.effective_chat.id] = {
         "order_id": order_id,
         "user_chat_id": order.get("user_chat_id"),
-        "admin_chat_id": admin_id,
     }
     await q.edit_message_caption(
         caption=(q.message.caption or "") + "\n\n❌ *لطفاً دلیل/پیام را تایپ کنید تا برای مشتری ارسال شود.*",
@@ -1804,33 +1986,49 @@ async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 
 async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    admin_id = _ensure_admin_chat_id()
-    if not admin_id:
-        return
-    if update.effective_chat.id != admin_id:
-        return
-
-    """Admin types a message after pressing 'مشکل دارد' to send to user."""
+    """
+    دریافت متن از ادمین بعد از بعضی اکشن‌ها:
+      - وارد کردن کد رهگیری پست
+      - ارسال پیام به مشتری
+      - نوشتن دلیل رد رسید
+    (با پشتیبانی چند ادمین)
+    """
     if not update.message:
         return
-    
-    pending_track = context.bot_data.get("admin_pending_tracking")
+
+    # 🔒 فقط ادمین‌های مجاز
+    if not _is_admin_user(update):
+        return
+
+    chat_id = update.effective_chat.id
+    text = (update.message.text or "").strip()
+    if not text:
+        return
+
+    # ---------------- tracking code flow ----------------
+    track_map = context.bot_data.get("admin_pending_tracking") or {}
+    pending_track = track_map.get(chat_id) if isinstance(track_map, dict) else None
     if pending_track:
-        order_id = pending_track["order_id"]
-        order = STORE.find_order(order_id)
+        order_id = pending_track.get("order_id")
+        order = STORE.find_order(order_id) if order_id else None
 
         if not order:
             await update.message.reply_text("❌ سفارش پیدا نشد.")
-            context.bot_data.pop("admin_pending_tracking", None)
+            try:
+                track_map.pop(chat_id, None)
+                if not track_map:
+                    context.bot_data.pop("admin_pending_tracking", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_tracking", None)
             return
 
-        track = update.message.text.strip()
+        track = text
 
         # ذخیره وضعیت ارسال
         STORE.update_order(order_id, shipping_status="shipped", tracking_code=track)
         _order_log(order_id, "admin", f"تحویل پست شد. کد رهگیری: {track}")
 
-        # ✅ ارسال پیام به مشتری (بدون Markdown برای جلوگیری از خطا)
+        # ارسال پیام به مشتری (بدون Markdown برای جلوگیری از خطا)
         try:
             await context.bot.send_message(
                 chat_id=int(order["user_chat_id"]),
@@ -1844,36 +2042,52 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except Exception as e:
             logger.error("Failed to send tracking to user: %s", e)
             await update.message.reply_text("❌ ارسال کد رهگیری به مشتری ناموفق بود.")
-            context.bot_data.pop("admin_pending_tracking", None)
+            try:
+                track_map.pop(chat_id, None)
+                if not track_map:
+                    context.bot_data.pop("admin_pending_tracking", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_tracking", None)
             return
 
-        # ✅ پیام تایید به ادمین + نگه داشتن پنل
+        # تایید به ادمین + نگه داشتن پنل
         await update.message.reply_text("✅ کد رهگیری برای مشتری ارسال شد.")
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=f"🛠 کنترل سفارش `{order_id}`",
             parse_mode="Markdown",
             reply_markup=admin_panel_keyboard(order_id)
         )
 
-        context.bot_data.pop("admin_pending_tracking", None)
+        try:
+            track_map.pop(chat_id, None)
+            if not track_map:
+                context.bot_data.pop("admin_pending_tracking", None)
+        except Exception:
+            context.bot_data.pop("admin_pending_tracking", None)
         return
 
-
-    pending_msg = context.bot_data.get("admin_pending_msg")
+    # ---------------- admin message flow ----------------
+    msg_map = context.bot_data.get("admin_pending_msg") or {}
+    pending_msg = msg_map.get(chat_id) if isinstance(msg_map, dict) else None
     if pending_msg:
-        order_id = pending_msg["order_id"]
-        order = STORE.find_order(order_id)
+        order_id = pending_msg.get("order_id")
+        order = STORE.find_order(order_id) if order_id else None
 
         if not order:
             await update.message.reply_text("❌ سفارش پیدا نشد.")
-            context.bot_data.pop("admin_pending_msg", None)
+            try:
+                msg_map.pop(chat_id, None)
+                if not msg_map:
+                    context.bot_data.pop("admin_pending_msg", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_msg", None)
             return
 
-        msg = update.message.text.strip()
+        msg = text
         _order_log(order_id, "admin", f"پیام ادمین به مشتری: {msg}")
 
-    # ✅ ارسال پیام واقعی به مشتری
+        # ارسال پیام واقعی به مشتری
         try:
             await context.bot.send_message(
                 chat_id=int(order["user_chat_id"]),
@@ -1883,34 +2097,47 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except Exception as e:
             logger.error("Failed to send admin message to user: %s", e)
             await update.message.reply_text("❌ ارسال پیام به مشتری ناموفق بود (خطای تلگرام).")
-            context.bot_data.pop("admin_pending_msg", None)
+            try:
+                msg_map.pop(chat_id, None)
+                if not msg_map:
+                    context.bot_data.pop("admin_pending_msg", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_msg", None)
             return
 
-    # ✅ تأیید به ادمین + نگه داشتن پنل
+        # تایید به ادمین + نگه داشتن پنل
         await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=f"🛠 کنترل سفارش `{order_id}`",
             parse_mode="Markdown",
             reply_markup=admin_panel_keyboard(order_id)
         )
 
-        context.bot_data.pop("admin_pending_msg", None)
+        try:
+            msg_map.pop(chat_id, None)
+            if not msg_map:
+                context.bot_data.pop("admin_pending_msg", None)
+        except Exception:
+            context.bot_data.pop("admin_pending_msg", None)
         return
 
-
-    pending = context.bot_data.get("admin_pending_reply")
-    admin_id = _ensure_admin_chat_id()
-    if not pending or not admin_id:
-        return
-    if update.effective_chat.id != admin_id:
+    # ---------------- receipt reject reason flow ----------------
+    reply_map = context.bot_data.get("admin_pending_reply") or {}
+    pending = reply_map.get(chat_id) if isinstance(reply_map, dict) else None
+    if not pending:
         return
 
-    msg = update.message.text.strip()
+    msg = text
     order_id = pending.get("order_id")
     user_chat_id = pending.get("user_chat_id")
     if not (order_id and user_chat_id):
-        context.bot_data.pop("admin_pending_reply", None)
+        try:
+            reply_map.pop(chat_id, None)
+            if not reply_map:
+                context.bot_data.pop("admin_pending_reply", None)
+        except Exception:
+            context.bot_data.pop("admin_pending_reply", None)
         return
 
     # update order status
@@ -1918,25 +2145,31 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         kb = InlineKeyboardMarkup([
-    [InlineKeyboardButton("📸 ارسال مجدد رسید", callback_data=f"receipt:start:{order_id}")],
-    [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
-])
+            [InlineKeyboardButton("📸 ارسال مجدد رسید", callback_data=f"receipt:start:{order_id}")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+        ])
 
         await context.bot.send_message(
-    chat_id=int(user_chat_id),
-    text=(
-        f"❌ رسید پرداخت برای سفارش `{order_id}` تایید نشد.\n\n"
-        f"پیام ادمین: {msg}\n\n"
-        "لطفاً روی «ارسال مجدد رسید» بزن و دوباره عکس رسید را ارسال کن."
-    ),
-    parse_mode="Markdown",
-    reply_markup=kb
-)
+            chat_id=int(user_chat_id),
+            text=(
+                f"❌ رسید پرداخت برای سفارش `{order_id}` تایید نشد.\n\n"
+                f"پیام ادمین: {msg}\n\n"
+                "لطفاً روی «ارسال مجدد رسید» بزن و دوباره عکس رسید را ارسال کن."
+            ),
+            parse_mode="Markdown",
+            reply_markup=kb
+        )
     except Exception as e:
         logger.error("Failed to send reject message to user: %s", e)
 
     await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
-    context.bot_data.pop("admin_pending_reply", None)
+    try:
+        reply_map.pop(chat_id, None)
+        if not reply_map:
+            context.bot_data.pop("admin_pending_reply", None)
+    except Exception:
+        context.bot_data.pop("admin_pending_reply", None)
+
 
 # ------------------ end manual payment / receipt workflow ------------------
 
@@ -2083,7 +2316,7 @@ async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, or
         reply_markup=main_menu()
     )
 
-    if ADMIN_CHAT_ID:
+    if _has_admin_chat():
         lines = []
         for i, it in enumerate(order["items"], 1):
             lines.append(
@@ -2105,7 +2338,7 @@ async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, or
             f"کدپستی: {order['customer'].get('postal')}\n"
         )
         try:
-            await context.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=msg)
+            await _broadcast_admin_message(context, msg)
         except Exception as e:
             logger.error("Failed to notify admin: %s", e)
         
@@ -2125,16 +2358,22 @@ async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="⬇️ از منوی پایین هم می‌تونی استفاده کنی.",
-            reply_markup=main_menu_reply()
+            reply_markup=main_menu_reply(is_admin=_is_admin_user(update))
         )
     else:
-        await update.message.reply_text(text, reply_markup=main_menu_reply())
+        await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
 
 #      روتر کلی دکمه ها 
 async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None :
     q = update.callback_query
     await q.answer() # پاسخ به کلیک اولیه برای حذف لودینگ
     data = (q.data or "").strip()
+
+    # 🔒 دسترسی به callback های ادمین
+    if (data.startswith("admin:") or data.startswith("ship:")) and not _is_admin_user(update):
+        await q.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
 
     if data == "admin:dashboard":
         await admin_dashboard(update, context)
@@ -2367,7 +2606,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
     if data.startswith("ship:need_track:"):
         _, _, order_id = data.split(":", 2)
-        context.bot_data["admin_pending_tracking"] = {"order_id": order_id}
+        context.bot_data.setdefault("admin_pending_tracking", {})[update.effective_chat.id] = {"order_id": order_id}
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="🔎 لطفاً کد رهگیری پست را تایپ کنید:"
@@ -2378,7 +2617,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
     if data.startswith("admin:msg:"):
         _, _, order_id = data.split(":", 2)
-        context.bot_data["admin_pending_msg"] = {"order_id": order_id}
+        context.bot_data.setdefault("admin_pending_msg", {})[update.effective_chat.id] = {"order_id": order_id}
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:"
@@ -2585,7 +2824,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="از منوی پایین می‌تونی ادامه بدی.",
-            reply_markup=main_menu_reply(),
+            reply_markup=main_menu_reply(is_admin=_is_admin_user(update)),
         )
         return
 
@@ -2692,5 +2931,4 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
 
