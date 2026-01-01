@@ -231,6 +231,32 @@ def _get_admin_chat_ids() -> List[int]:
 def _has_admin_chat() -> bool:
     return len(_get_admin_chat_ids()) > 0
 
+
+def _is_admin_chat(update: Update) -> bool:
+    """ادمین بودن + ثبت شدن این چت با دستور /admin (برای نمایش داشبورد)."""
+    if not _is_admin_user(update):
+        return False
+    chat = update.effective_chat
+    if not chat:
+        return False
+    try:
+        return int(chat.id) in _get_admin_chat_ids()
+    except Exception:
+        return False
+
+def _is_admin_chat_from_message(msg) -> bool:
+    """نسخه پیام (برای زمانی که فقط Message داریم)."""
+    if not _is_admin_user_from_message(msg):
+        return False
+    chat = getattr(msg, "chat", None)
+    if not chat:
+        return False
+    try:
+        return int(chat.id) in _get_admin_chat_ids()
+    except Exception:
+        return False
+
+
 async def _broadcast_admin_message(context: ContextTypes.DEFAULT_TYPE, text: str, **kwargs) -> None:
     for cid in _get_admin_chat_ids():
         try:
@@ -923,9 +949,9 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
              await context.bot.send_message(update.effective_chat.id, text)
              
         # ارسال یک پیام جدید با Reply Keyboard
-        await q.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await q.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
     else:
-        await update.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
 
 
 #     نمایش مراحل
@@ -939,7 +965,7 @@ async def admin_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # 🔒 جلوگیری از ادمین شدن افراد ناشناس
     if not _is_admin_user(update):
-        await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
         return
 
     global ADMIN_CHAT_ID
@@ -974,7 +1000,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # 🔒 فقط ادمین‌های مجاز
     if not _is_admin_user(update):
         if update.message:
-            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
         elif update.callback_query:
             await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
         return
@@ -1508,7 +1534,7 @@ async def show_my_order_status(update: Update, context: ContextTypes.DEFAULT_TYP
 
     mine = [o for o in orders if int(o.get("user_chat_id", 0)) == int(chat_id)]
     if not mine:
-        await update.message.reply_text("هنوز سفارشی برای شما ثبت نشده است.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text("هنوز سفارشی برای شما ثبت نشده است.", reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
         return
 
     # آخرین سفارش
@@ -1533,7 +1559,7 @@ async def show_my_order_status(update: Update, context: ContextTypes.DEFAULT_TYP
         text += f"\nآخرین تغییر: {h.get('text')}"
 
 
-    await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+    await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
 
 
 
@@ -1558,8 +1584,12 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await show_my_order_status(update, context)
 
     elif text == "📊 داشبورد فروش":
+        # 🔒 فقط بعد از /admin (ثبت چت ادمین) داشبورد نمایش داده شود
         if not _is_admin_user(update):
-            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
+            return
+        if not _is_admin_chat(update):
+            await update.message.reply_text("برای فعال شدن داشبورد فروش، ابتدا دستور /admin را ارسال کنید.", reply_markup=main_menu_reply(is_admin=False))
             return
         await admin_dashboard(update, context)
 
@@ -1608,7 +1638,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("customer", None)
         context.user_data.pop("pending", None)
         context.user_data["awaiting"] = None
-        await update.message.reply_text("❌ فرم لغو شد. از منوی پایین استفاده کن.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text("❌ فرم لغو شد. از منوی پایین استفاده کن.", reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
         # بازگشت به سبد (اختیاری)
         await show_cart(update, context)
         return ConversationHandler.END
@@ -1694,9 +1724,9 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     
     # آیا این کاربر ادمین مجاز است؟ (برای نمایش گزینه داشبورد در Reply Keyboard)
     if isinstance(update_or_msg, Update):
-        is_admin = _is_admin_user(update_or_msg)
+        is_admin = _is_admin_chat(update_or_msg)
     else:
-        is_admin = _is_admin_user_from_message(update_or_msg)
+        is_admin = _is_admin_chat_from_message(update_or_msg)
 
     send = context.bot.send_message
     
@@ -1820,13 +1850,18 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
         return None
 
     existing = context.user_data.get("current_order_id")
-    if existing and STORE.find_order(existing):
-        # sync shipping method/customer with latest user_data
+    if existing:
         order = STORE.find_order(existing)
+    # فقط اگر سفارش قبلی هنوز «باز» باشد (در جریان پرداخت/رسید) همان را ادامه می‌دهیم.
+    # اگر سفارش قبلاً پرداخت/تایید/ارسال شده باشد، باید سفارش جدید ساخته شود.
+    if order and (order.get("status") in ("awaiting_receipt", "receipt_submitted", "receipt_rejected")):
         cust = dict(order.get("customer", {}))
         cust.update(customer)  # customer جدید user_data
         STORE.update_order(existing, customer=cust, shipping_method=cust.get("shipping_method"))
         return existing
+    else:
+        # سفارش قبلی بسته شده؛ برای خرید جدید، از آن استفاده نکن
+        context.user_data.pop("current_order_id", None)
 
 
     order_id = _make_order_id()
@@ -1835,7 +1870,7 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
         "status": "awaiting_receipt",
         "created_at": datetime.utcnow().isoformat() + "Z",
         "total": _calc_cart_total(cart),
-        "items": cart,
+        "items": [dict(it) for it in (cart or [])],
         "customer": customer,
         "shipping_method": customer.get("shipping_method"),
         "shipping_status": "pending",
@@ -1950,6 +1985,9 @@ async def receipt_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     context.user_data.pop("awaiting_receipt", None)
     context.user_data.pop("active_order_id", None)
+    context.user_data.pop("current_order_id", None)
+    context.user_data["cart"] = []
+    context.user_data.pop("pending", None)
     await q.edit_message_text("انصراف داده شد. از منو می‌توانید ادامه دهید.", reply_markup=main_menu())
 
 
@@ -1965,7 +2003,7 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     order = STORE.find_order(order_id)
     if not order:
         context.user_data.pop("awaiting_receipt", None)
-        await update.message.reply_text("❌ سفارش پیدا نشد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text("❌ سفارش پیدا نشد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
         return
 
     # take best quality
@@ -1975,6 +2013,13 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # update order
     STORE.update_order(order_id, status="receipt_submitted", receipt={"file_id": file_id, "submitted_at": datetime.utcnow().isoformat() + "Z"})
     context.user_data.pop("awaiting_receipt", None)
+
+    # ✅ بعد از ثبت رسید، سبد خرید کاربر باید خالی شود تا خرید بعدی روی سفارش قبلی اضافه نشود
+    context.user_data["cart"] = []
+    context.user_data.pop("pending", None)
+    context.user_data.pop("active_order_id", None)
+    # مهم: برای اینکه سفارش بعدی «جدید» ساخته شود، شناسه سفارش جاری را پاک می‌کنیم
+    context.user_data.pop("current_order_id", None)
 
     await update.message.reply_text(
         "✅ رسید دریافت شد. پس از بررسی توسط ادمین، نتیجه به شما اطلاع داده می‌شود.",
@@ -2442,7 +2487,9 @@ async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, or
     )
 
     context.user_data["cart"] = []
+    context.user_data.pop("pending", None)
     context.user_data.pop("active_order_id", None)
+    context.user_data.pop("current_order_id", None)
 
     await q.edit_message_text(
         f"🎉 پرداخت با موفقیت انجام شد!\nشماره سفارش: {order_id}\n"
@@ -2494,10 +2541,10 @@ async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="⬇️ از منوی پایین هم می‌تونی استفاده کنی.",
-            reply_markup=main_menu_reply(is_admin=_is_admin_user(update))
+            reply_markup=main_menu_reply(is_admin=_is_admin_chat(update))
         )
     else:
-        await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)))
 
 #      روتر کلی دکمه ها 
 async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None :
@@ -2958,6 +3005,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 
         context.user_data.pop("active_order_id", None)
         context.user_data.pop("awaiting_receipt", None)
+        context.user_data.pop("current_order_id", None)
         context.user_data.pop("cart" , None)
         context.user_data.pop("customer" , None)
         context.user_data.pop("pending" , None)
@@ -2968,7 +3016,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="از منوی پایین می‌تونی ادامه بدی.",
-            reply_markup=main_menu_reply(is_admin=_is_admin_user(update)),
+            reply_markup=main_menu_reply(is_admin=_is_admin_chat(update)),
         )
         return
 
