@@ -5,8 +5,8 @@ import os
 import json
 import uuid
 import re
+from datetime import datetime, timezone, timedelta
 from collections import Counter
-from datetime import datetime, timedelta, timezone
 from typing import Dict,List,Optional,Tuple
 import emoji
 import requests
@@ -26,10 +26,6 @@ if not BOT_TOKEN :
     logger.warning("⚠️ متغییر محیطی BOT_TOKEN تنظیم نشده است . قبل از اجرا آن را ست کنید .")
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID" , "").strip() or None
-LOW_STOCK_THRESHOLD = int(os.getenv("LOW_STOCK_THRESHOLD", "2"))
-ABANDONED_CART_HOURS = int(os.getenv("ABANDONED_CART_HOURS", "24"))
-ABANDONED_CART_CHECK_MINUTES = int(os.getenv("ABANDONED_CART_CHECK_MINUTES", "60"))
-ABANDONED_CART_DISCOUNT_PERCENT = int(os.getenv("ABANDONED_CART_DISCOUNT_PERCENT", "5"))
 
 # Manual card payment settings
 CARDS = [{"holder":"امیرمهدی پیری" , "number": "6104338705632277"} , {"holder":"امیرمهدی پیری" , "number": "5859831211429799"}]
@@ -49,12 +45,6 @@ def _unsafe_color(safe_color: str, product_variants: Dict) -> Optional[str]:
         if safe_color_test == safe_color:
             return color
     return None
-
-
-def _low_stock_warning(available: int) -> str:
-    if available > 0 and available <= LOW_STOCK_THRESHOLD:
-        return f"⚠️ موجودی رو به اتمام است (فقط {available} عدد باقی مانده)."
-    return ""
 
 
 #      storge(json)
@@ -325,8 +315,6 @@ def admin_panel_keyboard(order_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📦 بسته‌بندی شد", callback_data=f"ship:packed:{order_id}")],
         [InlineKeyboardButton("🚚 تحویل پست شد + کد رهگیری", callback_data=f"ship:need_track:{order_id}")],
-        [InlineKeyboardButton("🏷 ثبت کد تخفیف", callback_data=f"admin:discount:{order_id}")],
-        [InlineKeyboardButton("📊 محاسبه سود تقریبی", callback_data=f"admin:profit:{order_id}")],
         [InlineKeyboardButton("✉️ پیام به مشتری", callback_data=f"admin:msg:{order_id}")],
     ])
 
@@ -482,256 +470,103 @@ def _ftm_toman(n:int) -> str :
 def _calc_cart_total(cart:List[dict]) -> int:
     return sum(it["qty"] * it["price"] for it in cart)
 
-def _parse_iso_datetime(value: str) -> Optional[datetime]:
-    if not value:
+
+# ------------------ Sales dashboard helpers ------------------
+# فروش را بر اساس «زمان پرداخت» حساب می‌کنیم:
+# - پرداخت آنلاین: paid_at
+# - پرداخت کارت‌به‌کارت: confirmed_at (پس از تایید ادمین)
+# - در نهایت fallback به created_at
+PAID_STATUSES = {"paid", "paid_confirmed", "fulfilled"}
+
+# منطقه زمانی پیش‌فرض: ایران (+03:30). اگر نیاز داری عوضش کنی، env زیر را ست کن:
+# TZ_OFFSET_MINUTES=210
+try:
+    TZ_OFFSET_MINUTES = int(os.getenv("TZ_OFFSET_MINUTES", "210"))
+except Exception:
+    TZ_OFFSET_MINUTES = 210
+LOCAL_TZ = timezone(timedelta(minutes=TZ_OFFSET_MINUTES))
+
+def _parse_dt_utc_z(s: Optional[str]) -> Optional[datetime]:
+    """Parse ISO datetime strings saved like 2025-01-01T12:34:56.123Z (UTC)."""
+    if not s:
         return None
     try:
-        if value.endswith("Z"):
-            value = value[:-1] + "+00:00"
-        return datetime.fromisoformat(value)
+        ss = str(s).strip()
+        if ss.endswith("Z"):
+            ss = ss[:-1]
+        dt = datetime.fromisoformat(ss)
+        # our storage uses utc time but without tzinfo -> set UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
     except Exception:
         return None
 
-def _order_sales_datetime(order: dict) -> Optional[datetime]:
-    for key in ("confirmed_at", "created_at"):
-        dt = _parse_iso_datetime(order.get(key))
-        if dt:
-            return dt
-    return None
-
-def _paid_orders_only(orders: List[dict]) -> List[dict]:
-    paid_statuses = {"paid", "paid_confirmed"}
-    return [o for o in orders if o.get("status") in paid_statuses]
-
-def _summarize_sales(orders: List[dict], start: datetime, end: datetime) -> Dict[str, int]:
-    total_amount = 0
-    total_orders = 0
-    total_items = 0
-    for order in orders:
-        order_dt = _order_sales_datetime(order)
-        if not order_dt:
-            continue
-        if not (start <= order_dt <= end):
-            continue
-        total_orders += 1
-        total_amount += int(order.get("total", 0) or 0)
-        total_items += sum(int(it.get("qty", 0) or 0) for it in order.get("items", []))
-    return {
-        "total_amount": total_amount,
-        "total_orders": total_orders,
-        "total_items": total_items,
-    }
-
-def _summarize_popular_products(orders: List[dict]) -> Dict[str, dict]:
-    products: Dict[str, dict] = {}
-    for order in orders:
-        for item in order.get("items", []):
-            product_id = item.get("product_id") or item.get("name") or "unknown"
-            entry = products.setdefault(
-                product_id,
-                {
-                    "name": item.get("name") or "—",
-                    "total": 0,
-                    "sizes": Counter(),
-                    "colors": Counter(),
-                },
-            )
-            qty = int(item.get("qty", 0) or 0)
-            entry["total"] += qty
-            size = item.get("size")
-            if size:
-                entry["sizes"][size] += qty
-            color = item.get("color")
-            if color:
-                entry["colors"][color] += qty
-    return products
-
-def _generate_discount_code(prefix: str = "OFF") -> str:
-    token = uuid.uuid4().hex[:6].upper()
-    return f"{prefix}{ABANDONED_CART_DISCOUNT_PERCENT}-{token}"
-
-def _parse_discount_input(text: str, total: int) -> Optional[dict]:
-    parts = text.strip().split()
-    if len(parts) < 2:
+def _order_paid_dt_local(order: dict) -> Optional[datetime]:
+    dt = _parse_dt_utc_z(order.get("paid_at") or order.get("confirmed_at") or order.get("created_at"))
+    if not dt:
         return None
+    return dt.astimezone(LOCAL_TZ)
 
-    code = parts[0]
-    rest = " ".join(parts[1:])
-    percent_match = re.search(r"(\d+(?:\.\d+)?)\s*%", rest)
-    if percent_match:
-        percent = float(percent_match.group(1))
-        amount = int(round(total * percent / 100))
-        return {
-            "code": code,
-            "type": "percent",
-            "value": percent,
-            "amount": amount,
-        }
+def _product_name_by_id(pid: str) -> str:
+    try:
+        for gender, cats in CATALOG.items():
+            for cat, products in (cats or {}).items():
+                for p in (products or []):
+                    if p.get("id") == pid:
+                        return p.get("name") or pid
+    except Exception:
+        pass
+    return pid
 
-    number_match = re.search(r"\d[\d,]*", rest)
-    if not number_match:
-        return None
-
-    amount = int(number_match.group(0).replace(",", ""))
-    return {
-        "code": code,
-        "type": "amount",
-        "value": amount,
-        "amount": amount,
-    }
-
-def _parse_profit_input(text: str) -> Optional[Tuple[int, int]]:
-    numbers = re.findall(r"\d[\d,]*", text)
-    if not numbers:
-        return None
-    purchase_total = int(numbers[0].replace(",", ""))
-    shipping_cost = int(numbers[1].replace(",", "")) if len(numbers) > 1 else 0
-    return purchase_total, shipping_cost
-
-def _estimate_profit(order: dict) -> dict:
-    sale_total = int(order.get("total", 0) or 0)
-    discount_amount = int(order.get("admin_discount_amount", 0) or 0)
-    shipping_cost = int(order.get("shipping_cost", 0) or 0)
-    purchase_total = int(order.get("purchase_total", 0) or 0)
-    profit = sale_total - discount_amount - shipping_cost - purchase_total
-    return {
-        "sale_total": sale_total,
-        "discount_amount": discount_amount,
-        "shipping_cost": shipping_cost,
-        "purchase_total": purchase_total,
-        "profit": profit,
-    }
-
-
-def _order_is_unpaid(order: dict) -> bool:
-    unpaid_statuses = {"awaiting_receipt", "receipt_submitted", "receipt_rejected"}
-    return order.get("status") in unpaid_statuses
-
-
-def _abandoned_order_age_hours(order: dict) -> Optional[float]:
-    created_at = _parse_iso_datetime(order.get("created_at"))
-    if not created_at:
-        return None
-    now = datetime.now(timezone.utc)
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    return (now - created_at).total_seconds() / 3600
-
-
-def _abandoned_report_lines(order: dict, age_hours: float) -> str:
-    username = order.get("username") or "—"
-    chat_id = order.get("user_chat_id") or "—"
-    return (
-        f"• OrderID: {order.get('order_id')}\n"
-        f"  کاربر: `@{username}` | ChatID: `{chat_id}`\n"
-        f"  وضعیت: {order.get('status')} | مبلغ: {_ftm_toman(int(order.get('total', 0) or 0))}\n"
-        f"  سن سبد: {age_hours:.1f} ساعت | کد تخفیف: {order.get('abandoned_discount_code') or '—'}"
-    )
-
-
-async def _process_abandoned_carts() -> None:
-    orders = STORE.data.get("orders", [])
-    if not orders:
-        return
-
-    admin_id = _ensure_admin_chat_id()
-    threshold_hours = ABANDONED_CART_HOURS
-    report_lines: List[str] = []
-    report_order_ids: List[str] = []
-
-    for order in orders:
-        if not _order_is_unpaid(order):
+def _sales_agg(orders: List[dict], start: datetime, end: datetime) -> Dict[str, object]:
+    count = 0
+    amount = 0
+    items = Counter()
+    for o in (orders or []):
+        if o.get("status") not in PAID_STATUSES:
             continue
-
-        age_hours = _abandoned_order_age_hours(order)
-        if age_hours is None or age_hours < threshold_hours:
+        dt = _order_paid_dt_local(o)
+        if not dt:
             continue
+        if start <= dt < end:
+            count += 1
+            amount += int(o.get("total") or 0)
+            for it in (o.get("items") or []):
+                key = it.get("product_id") or it.get("id") or it.get("name") or "unknown"
+                try:
+                    items[key] += int(it.get("qty") or 0)
+                except Exception:
+                    items[key] += 0
+    avg = int(amount / count) if count else 0
+    return {"count": count, "amount": amount, "avg": avg, "items": items}
 
-        order_id = order.get("order_id")
-        if not order_id:
-            continue
+def _pct_change(curr: int, prev: int) -> Optional[float]:
+    if prev == 0:
+        if curr == 0:
+            return None
+        return 100.0
+    return (curr - prev) / prev * 100.0
 
-        if not order.get("abandoned_discount_code"):
-            code = _generate_discount_code()
-            STORE.update_order(order_id, abandoned_discount_code=code)
-            order["abandoned_discount_code"] = code
+def _format_pct(p: Optional[float]) -> str:
+    if p is None:
+        return "—"
+    sign = "+" if p > 0 else ""
+    try:
+        return f"{sign}{p:.0f}%"
+    except Exception:
+        return "—"
 
-        if not order.get("abandoned_notified_at"):
-            total = int(order.get("total", 0) or 0)
-            cards_text = ""
-            for i, card in enumerate(CARDS, start=1):
-                cards_text += (f"{i}) 💳 {format_card_number(card['number'])}\n" f"👤 {card['holder']}\n")
-
-            shipping_method = (order.get("shipping_method") or order.get("customer", {}).get("shipping_method"))
-            ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
-            shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
-
-            discount_code = order.get("abandoned_discount_code")
-            text = (
-                "🛒 **یادآوری سبد خرید**\n\n"
-                f"سبد خرید شما بیش از {threshold_hours} ساعت بدون پرداخت مانده است. اگر قصد تکمیل خرید دارید، "
-                "با استفاده از کد تخفیف زیر می‌توانید پرداخت را انجام دهید.\n\n"
-                f"🧾 شماره سفارش: `{order_id}`\n"
-                f"💰 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n"
-                f"🚚 روش ارسال: **{ship_label}**\n"
-                f"{shipping_note}\n\n"
-                f"🎁 کد تخفیف شما: **{discount_code}** ({ABANDONED_CART_DISCOUNT_PERCENT}% تخفیف)\n"
-                "برای اعمال تخفیف، کد را هنگام ارسال رسید پرداخت اعلام کنید.\n\n"
-                "🔹 اطلاعات حساب‌های فروشگاه:\n"
-                f"{cards_text}\n"
-                "بعد از پرداخت، رسید را ارسال کنید."
-            )
-
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📸 ارسال رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
-                [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
-            ])
-
-            try:
-                await application.bot.send_message(
-                    chat_id=int(order.get("user_chat_id")),
-                    text=text,
-                    reply_markup=kb,
-                    parse_mode="Markdown",
-                )
-                STORE.update_order(order_id, abandoned_notified_at=datetime.utcnow().isoformat() + "Z")
-                _order_log(order_id, "system", "یادآوری سبد خرید و کد تخفیف ارسال شد.")
-            except Exception as exc:
-                logger.warning("Failed to send abandoned cart message for %s: %s", order_id, exc)
-
-        if admin_id and not order.get("abandoned_reported_at"):
-            report_lines.append(_abandoned_report_lines(order, age_hours))
-            report_order_ids.append(order_id)
-
-    if admin_id and report_lines:
-        report_text = (
-            "📊 **گزارش سبدهای رها شده**\n\n"
-            + "\n\n".join(report_lines)
-        )
-        try:
-            await application.bot.send_message(
-                chat_id=int(admin_id),
-                text=report_text,
-                parse_mode="Markdown",
-            )
-            for order_id in report_order_ids:
-                STORE.update_order(order_id, abandoned_reported_at=datetime.utcnow().isoformat() + "Z")
-        except Exception as exc:
-            logger.warning("Failed to send abandoned cart report: %s", exc)
-
-
-async def _abandoned_cart_worker() -> None:
-    while True:
-        try:
-            await _process_abandoned_carts()
-        except Exception as exc:
-            logger.exception("abandoned cart worker error: %s", exc)
-        await asyncio.sleep(max(5, ABANDONED_CART_CHECK_MINUTES) * 60)
-
-def _top_counter_value(counter: Counter) -> tuple[str, int] | None:
+def _top_items_text(counter: Counter, n: int = 5) -> str:
     if not counter:
-        return None
-    return counter.most_common(1)[0]
+        return "—"
+    parts = []
+    for pid, qty in counter.most_common(n):
+        parts.append(f"• {_product_name_by_id(pid)} × {qty}")
+    return "\n".join(parts) if parts else "—"
+
+# ------------------ end sales dashboard helpers ------------------
+
 
 # **[تغییر]** توابع کمکی برای مدیریت سبد خرید (حذف/کم و زیاد کردن)
 def _update_cart_item_qty(cart: List[dict], item_index: int, delta: int) -> bool:
@@ -864,105 +699,107 @@ async def admin_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=main_menu_reply()
     )
 
+
+async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """داشبورد فروش روزانه/هفتگی/ماهیانه (فقط ادمین)."""
+    admin_id = _ensure_admin_chat_id()
+    if not admin_id or update.effective_chat.id != admin_id:
+        if update.message:
+            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply())
+        elif update.callback_query:
+            await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
+    orders = STORE.data.get("orders", []) or []
+
+    now_local = datetime.now(timezone.utc).astimezone(LOCAL_TZ)
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
+
+    # امروز
+    today = _sales_agg(orders, today_start, tomorrow_start)
+    yesterday = _sales_agg(orders, today_start - timedelta(days=1), today_start)
+
+    # ۷ روز اخیر (شامل امروز)
+    week_start = today_start - timedelta(days=6)
+    week_end = tomorrow_start
+    week = _sales_agg(orders, week_start, week_end)
+    prev_week = _sales_agg(orders, week_start - timedelta(days=7), week_start)
+
+    # ۳۰ روز اخیر (شامل امروز)
+    month_start = today_start - timedelta(days=29)
+    month_end = tomorrow_start
+    month = _sales_agg(orders, month_start, month_end)
+    prev_month = _sales_agg(orders, month_start - timedelta(days=30), month_start)
+
+    # وضعیت سفارش‌ها
+    status_counts = Counter((o.get("status") or "unknown") for o in orders)
+
+    # تاریخ شمسی برای نمایش
+    try:
+        j_now = jdatetime.datetime.fromgregorian(datetime=now_local.replace(tzinfo=None))
+        jalali_label = j_now.strftime("%Y/%m/%d")
+        greg_label = now_local.strftime("%Y-%m-%d")
+        date_label = f"{jalali_label} ({greg_label})"
+    except Exception:
+        date_label = now_local.strftime("%Y-%m-%d")
+
+    lines = []
+    lines.append("📊 *داشبورد فروش*")
+    lines.append(f"📅 تاریخ: `{date_label}`")
+    lines.append(f"🕒 منطقه زمانی: `UTC{TZ_OFFSET_MINUTES/60:+.1f}`")
+    lines.append("")
+    lines.append("🗓 *امروز*")
+    lines.append(f"• تعداد سفارش پرداخت‌شده: `{today['count']}`")
+    lines.append(f"• مبلغ فروش: *{_ftm_toman(today['amount'])}*")
+    lines.append(f"• میانگین سبد: `{_ftm_toman(today['avg'])}`")
+    lines.append(f"• تغییر نسبت به دیروز (مبلغ): `{_format_pct(_pct_change(today['amount'], yesterday['amount']))}`")
+    lines.append("")
+    lines.append("📅 *۷ روز اخیر*")
+    lines.append(f"• تعداد: `{week['count']}`")
+    lines.append(f"• فروش: *{_ftm_toman(week['amount'])}*")
+    lines.append(f"• میانگین: `{_ftm_toman(week['avg'])}`")
+    lines.append(f"• تغییر نسبت به ۷ روز قبل (مبلغ): `{_format_pct(_pct_change(week['amount'], prev_week['amount']))}`")
+    lines.append("• پرفروش‌ها:")
+    lines.append(_top_items_text(week["items"]))
+    lines.append("")
+    lines.append("📆 *۳۰ روز اخیر*")
+    lines.append(f"• تعداد: `{month['count']}`")
+    lines.append(f"• فروش: *{_ftm_toman(month['amount'])}*")
+    lines.append(f"• میانگین: `{_ftm_toman(month['avg'])}`")
+    lines.append(f"• تغییر نسبت به ۳۰ روز قبل (مبلغ): `{_format_pct(_pct_change(month['amount'], prev_month['amount']))}`")
+    lines.append("• پرفروش‌ها:")
+    lines.append(_top_items_text(month["items"]))
+    lines.append("")
+    lines.append("📦 *وضعیت سفارش‌ها*")
+    lines.append(f"• awaiting_receipt: `{status_counts.get('awaiting_receipt', 0)}`")
+    lines.append(f"• receipt_submitted: `{status_counts.get('receipt_submitted', 0)}`")
+    lines.append(f"• receipt_rejected: `{status_counts.get('receipt_rejected', 0)}`")
+    lines.append(f"• paid: `{status_counts.get('paid', 0)}`")
+    lines.append(f"• paid_confirmed: `{status_counts.get('paid_confirmed', 0)}`")
+    lines.append(f"• fulfilled: `{status_counts.get('fulfilled', 0)}`")
+
+    msg = "\n".join(lines)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 بروزرسانی داشبورد", callback_data="admin:dashboard")],
+    ])
+
+    if update.message:
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
+    elif update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        try:
+            await q.edit_message_text(msg, parse_mode="Markdown", reply_markup=kb)
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode="Markdown", reply_markup=kb)
+
+
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"ChatID شما: {update.effective_chat.id}")
 
-async def admin_sales_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    admin_id = _ensure_admin_chat_id()
-    if not admin_id:
-        await update.message.reply_text("⚠️ ادمین ثبت نشده است. لطفاً ابتدا دستور /admin را بزنید.")
-        return
-    if update.effective_chat.id != admin_id:
-        await update.message.reply_text("❌ دسترسی غیرمجاز.")
-        return
-
-    now = datetime.now(timezone.utc)
-    start_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start_week = now - timedelta(days=7)
-    start_month = now - timedelta(days=30)
-
-    orders = _paid_orders_only(STORE.data.get("orders", []))
-    daily = _summarize_sales(orders, start_day, now)
-    weekly = _summarize_sales(orders, start_week, now)
-    monthly = _summarize_sales(orders, start_month, now)
-
-    def _format_sales_block(title: str, data: Dict[str, int]) -> str:
-        return (
-            f"{title}\n"
-            f"سفارش‌ها: {data['total_orders']}\n"
-            f"آیتم‌ها: {data['total_items']}\n"
-            f"فروش: {_ftm_toman(data['total_amount'])}\n"
-        )
-
-    text = (
-        "📊 داشبورد فروش\n\n"
-        + _format_sales_block("📅 روزانه (امروز)", daily)
-        + "\n"
-        + _format_sales_block("📆 هفتگی (۷ روز اخیر)", weekly)
-        + "\n"
-        + _format_sales_block("🗓️ ماهانه (۳۰ روز اخیر)", monthly)
-        + "\n"
-        "ℹ️ فقط سفارش‌های پرداخت‌شده/تاییدشده محاسبه شده‌اند."
-    )
-    await update.message.reply_text(text)
-
 # --- end admin helpers ---
-
-async def admin_popular_products(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    admin_id = _ensure_admin_chat_id()
-    if not admin_id:
-        await update.message.reply_text("⚠️ ادمین ثبت نشده است. لطفاً ابتدا دستور /admin را بزنید.")
-        return
-    if update.effective_chat.id != admin_id:
-        await update.message.reply_text("❌ دسترسی غیرمجاز.")
-        return
-
-    orders = _paid_orders_only(STORE.data.get("orders", []))
-    if not orders:
-        await update.message.reply_text("هنوز سفارشی پرداخت/تاییدشده‌ای ثبت نشده است.")
-        return
-
-    products = _summarize_popular_products(orders)
-    if not products:
-        await update.message.reply_text("اطلاعات فروش برای تحلیل کافی نیست.")
-        return
-
-    sorted_products = sorted(products.values(), key=lambda x: x["total"], reverse=True)
-    overall_sizes = Counter()
-    overall_colors = Counter()
-    for p in sorted_products:
-        overall_sizes.update(p["sizes"])
-        overall_colors.update(p["colors"])
-
-    lines = []
-    for i, p in enumerate(sorted_products[:10], 1):
-        top_size = _top_counter_value(p["sizes"])
-        top_color = _top_counter_value(p["colors"])
-        size_text = f"{top_size[0]} ({top_size[1]})" if top_size else "—"
-        color_text = f"{top_color[0]} ({top_color[1]})" if top_color else "—"
-        lines.append(
-            f"{i}. {p['name']} — فروش: {p['total']} عدد | سایز پرفروش: {size_text} | رنگ پرفروش: {color_text}"
-        )
-
-    overall_size = _top_counter_value(overall_sizes)
-    overall_color = _top_counter_value(overall_colors)
-    overall_block = "📌 جمع‌بندی کلی\n"
-    if overall_size:
-        overall_block += f"سایز پرفروش: {overall_size[0]} ({overall_size[1]})\n"
-    else:
-        overall_block += "سایز پرفروش: —\n"
-    if overall_color:
-        overall_block += f"رنگ پرفروش: {overall_color[0]} ({overall_color[1]})\n"
-    else:
-        overall_block += "رنگ پرفروش: —\n"
-
-    text = (
-        "📣 محصولات پرفروش + سایز + رنگ\n\n"
-        + "\n".join(lines)
-        + "\n\n"
-        + overall_block
-    )
-    await update.message.reply_text(text)
 
 async def show_gender(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -1253,21 +1090,12 @@ async def show_qty_picker(update: Update, context: ContextTypes.DEFAULT_TYPE, ch
     pend["price"] = price
 
     photo = _product_photo_for_list(p)
-    warning = _low_stock_warning(available)
-    cap_lines = [
-        f"{p['name']}",
-        f"سایز: {chosen_size}",
-        f"موجودی: {available}",
-    ]
-    if warning:
-        cap_lines.append(warning)
-    cap_lines.extend(
-        [
-            f"قیمت واحد: {_ftm_toman(price)}",
-            f"قیمت نهایی: {_ftm_toman(price)}",
-        ]
+    cap = (
+        f"{p['name']}\nسایز: {chosen_size}\n"
+        f"موجودی: {available}\n"
+        f"قیمت واحد: {_ftm_toman(price)}\n"
+        f"قیمت نهایی: {_ftm_toman(price)}"
     )
-    cap = "\n".join(cap_lines)
 
     # ✅ مرحله D: به‌جای پیام جدید، همان پیام قبلی را ویرایش کن
     try:
@@ -1317,21 +1145,12 @@ async def show_qty_picker_combined(update: Update, context: ContextTypes.DEFAULT
     }
 
     photo = v.get("photo") or _product_photo_for_list(p)
-    warning = _low_stock_warning(available)
-    cap_lines = [
-        f"{p['name']}",
-        f"رنگ: {color} | سایز: {size}",
-        f"موجودی: {available}",
-    ]
-    if warning:
-        cap_lines.append(warning)
-    cap_lines.extend(
-        [
-            f"قیمت واحد: {_ftm_toman(v['price'])}",
-            f"قیمت نهایی: {_ftm_toman(v['price'])}",
-        ]
+    cap = (
+        f"{p['name']}\nرنگ: {color} | سایز: {size}\n"
+        f"موجودی: {available}\n"
+        f"قیمت واحد: {_ftm_toman(v['price'])}\n"
+        f"قیمت نهایی: {_ftm_toman(v['price'])}"
     )
-    cap = "\n".join(cap_lines)
 
     # ✅ مرحله D: به‌جای پیام جدید، همان پیام قبلی را ویرایش کن
     try:
@@ -1991,106 +1810,10 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if update.effective_chat.id != admin_id:
         return
 
-
     """Admin types a message after pressing 'مشکل دارد' to send to user."""
     if not update.message:
         return
     
-    pending_discount = context.bot_data.get("admin_pending_discount")
-    if pending_discount:
-        order_id = pending_discount["order_id"]
-        order = STORE.find_order(order_id)
-        if not order:
-            await update.message.reply_text("❌ سفارش پیدا نشد.")
-            context.bot_data.pop("admin_pending_discount", None)
-            return
-
-        parsed = _parse_discount_input(update.message.text, int(order.get("total", 0) or 0))
-        if not parsed:
-            await update.message.reply_text(
-                "❌ فرمت کد تخفیف نامعتبر است.\n"
-                "مثال: `OFF10 10%` یا `OFF500 50000`",
-                parse_mode="Markdown",
-            )
-            return
-
-        STORE.update_order(
-            order_id,
-            admin_discount_code=parsed["code"],
-            admin_discount_type=parsed["type"],
-            admin_discount_value=parsed["value"],
-            admin_discount_amount=parsed["amount"],
-            discount_registered_at=datetime.utcnow().isoformat() + "Z",
-        )
-        _order_log(
-            order_id,
-            "admin",
-            f"کد تخفیف ثبت شد: {parsed['code']} ({parsed['amount']:,} تومان)",
-        )
-
-        await update.message.reply_text(
-            "✅ کد تخفیف ثبت شد.\n"
-            f"کد: {parsed['code']}\n"
-            f"مبلغ تخفیف: {_ftm_toman(parsed['amount'])}",
-        )
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"🛠 کنترل سفارش `{order_id}`",
-            parse_mode="Markdown",
-            reply_markup=admin_panel_keyboard(order_id),
-        )
-        context.bot_data.pop("admin_pending_discount", None)
-        return
-
-    pending_profit = context.bot_data.get("admin_pending_profit")
-    if pending_profit:
-        order_id = pending_profit["order_id"]
-        order = STORE.find_order(order_id)
-        if not order:
-            await update.message.reply_text("❌ سفارش پیدا نشد.")
-            context.bot_data.pop("admin_pending_profit", None)
-            return
-
-        parsed = _parse_profit_input(update.message.text)
-        if not parsed:
-            await update.message.reply_text(
-                "❌ فرمت نامعتبر است.\n"
-                "مثال: `1200000 50000` (قیمت خرید کل / هزینه ارسال)",
-                parse_mode="Markdown",
-            )
-            return
-
-        purchase_total, shipping_cost = parsed
-        STORE.update_order(
-            order_id,
-            purchase_total=purchase_total,
-            shipping_cost=shipping_cost,
-            profit_estimated_at=datetime.utcnow().isoformat() + "Z",
-        )
-        profit_data = _estimate_profit(STORE.find_order(order_id) or order)
-        _order_log(
-            order_id,
-            "admin",
-            f"سود تقریبی محاسبه شد: {profit_data['profit']:,} تومان",
-        )
-
-        await update.message.reply_text(
-            "📊 سود تقریبی سفارش:\n"
-            f"فروش: {_ftm_toman(profit_data['sale_total'])}\n"
-            f"قیمت خرید: {_ftm_toman(profit_data['purchase_total'])}\n"
-            f"تخفیف: {_ftm_toman(profit_data['discount_amount'])}\n"
-            f"هزینه ارسال: {_ftm_toman(profit_data['shipping_cost'])}\n"
-            f"سود تقریبی: {_ftm_toman(profit_data['profit'])}",
-        )
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=f"🛠 کنترل سفارش `{order_id}`",
-            parse_mode="Markdown",
-            reply_markup=admin_panel_keyboard(order_id),
-        )
-        context.bot_data.pop("admin_pending_profit", None)
-        return
-
     pending_track = context.bot_data.get("admin_pending_tracking")
     if pending_track:
         order_id = pending_track["order_id"]
@@ -2346,6 +2069,7 @@ async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, or
     STORE.update_order(
         order_id,
         status="paid",
+        paid_at=datetime.utcnow().isoformat() + "Z",
         payment={**order["payment"], "verify_raw": res.get("raw"), "track_id": res.get("track_id")}
     )
 
@@ -2410,7 +2134,12 @@ async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None :
     q = update.callback_query
     await q.answer() # پاسخ به کلیک اولیه برای حذف لودینگ
-    data = (q.data or "").strip() 
+    data = (q.data or "").strip()
+
+    if data == "admin:dashboard":
+        await admin_dashboard(update, context)
+        return
+ 
 
     logger.info(f"Received callback data: {data}")
     logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
@@ -2503,7 +2232,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         _, _, order_id = data.split(":", 2)
         await admin_reject_start(update, context, order_id)
         return
-    # ---- end manual payment / receipt callbacks ----
     # ---- end manual payment / receipt callbacks ----
 
 
@@ -2637,380 +2365,332 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         return
 
     
-
-def gender_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("👨 مردانه" , callback_data="catalog:gender:men"),
-            InlineKeyboardButton("👩 زنانه" , callback_data="catalog:gender:women"),
-        ],
-        [InlineKeyboardButton("🏠 بازگشت به منو" , callback_data="menu:back_home")],
-    ])
-
-
-def category_keyboard(gender : str) -> InlineKeyboardMarkup:
-    cats = list(CATALOG.get(gender , {}).keys())
-    rows = []
-    for i in range(0 , len(cats) , 2):
-        chunk = cats[i:i+2]
-        rows.append([InlineKeyboardButton(c , callback_data=f"catalog:category:{gender}:{_safe_callback(c)}")for c in chunk])
-    rows.append([
-        InlineKeyboardButton("⬅️ تغییر جنسیت" , callback_data="menu:products"),
-        InlineKeyboardButton("🏠 منو اصلی" , callback_data="menu:back_home"),
-    ])
-    return InlineKeyboardMarkup(rows)
-
-def admin_panel_keyboard(order_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📦 بسته‌بندی شد", callback_data=f"ship:packed:{order_id}")],
-        [InlineKeyboardButton("🚚 تحویل پست شد + کد رهگیری", callback_data=f"ship:need_track:{order_id}")],
-        [InlineKeyboardButton("✉️ پیام به مشتری", callback_data=f"admin:msg:{order_id}")],
-    ])
-def admin_panel_keyboard(order_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📦 بسته‌بندی شد", callback_data=f"ship:packed:{order_id}")],
-        [InlineKeyboardButton("🚚 تحویل پست شد + کد رهگیری", callback_data=f"ship:need_track:{order_id}")],
-        [InlineKeyboardButton("🏷 ثبت کد تخفیف", callback_data=f"admin:discount:{order_id}")],
-        [InlineKeyboardButton("📊 محاسبه سود تقریبی", callback_data=f"admin:profit:{order_id}")],
-        [InlineKeyboardButton("✉️ پیام به مشتری", callback_data=f"admin:msg:{order_id}")],
-    ])
-
-
-
-
-# ------------------ Shipping methods ------------------
-# روش‌های ارسال (فعلاً هزینه ثابت/صفر؛ بعداً می‌توانید برای هر روش مبلغ تعیین کنید)
-SHIPPING_METHODS = {
-    "post": {"label": "📮 پست"},
-    "tipax": {"label": "🚚 تیپاکس"},
-    "courier": {"label": "🛵 پیک (درون‌شهری)"},
-}
-
-SHIPPING_INFO = {
-    "post": "📮 پست: هزینه ارسال بر عهده مشتری است (پس‌کرایه/پرداخت هنگام تحویل یا طبق فاکتور پست).",
-    "tipax": "🚚 تیپاکس: هزینه ارسال بر عهده مشتری است و هنگام ارسال/تحویل محاسبه و دریافت می‌شود.",
-    "courier": "🛵 پیک درون‌شهری: هزینه ارسال بر عهده مشتری است و قبل از ارسال هماهنگ می‌شود.",
-}
-
-
-def shipping_methods_keyboard(selected: str | None = None) -> InlineKeyboardMarkup:
-    rows = []
-    for key, info in SHIPPING_METHODS.items():
-        prefix = "✅ " if selected == key else ""
-        rows.append([InlineKeyboardButton(f"{prefix}{info['label']}", callback_data=f"shipmethod:set:{key}")])
-    rows.append([InlineKeyboardButton("⬅️ بازگشت به خلاصه سفارش", callback_data="shipmethod:back")])
-
-def _summarize_popular_products(orders: List[dict]) -> Dict[str, dict]:
-    products: Dict[str, dict] = {}
-    for order in orders:
-        for item in order.get("items", []):
-            product_id = item.get("product_id") or item.get("name") or "unknown"
-            entry = products.setdefault(
-                product_id,
-                {
-                    "name": item.get("name") or "—",
-                    "total": 0,
-                    "sizes": Counter(),
-                    "colors": Counter(),
-                },
-            )
-            qty = int(item.get("qty", 0) or 0)
-            entry["total"] += qty
-            size = item.get("size")
-            if size:
-                entry["sizes"][size] += qty
-            color = item.get("color")
-            if color:
-                entry["colors"][color] += qty
-    return products
-
-def _generate_discount_code(prefix: str = "OFF") -> str:
-    token = uuid.uuid4().hex[:6].upper()
-    return f"{prefix}{ABANDONED_CART_DISCOUNT_PERCENT}-{token}"
-
-def _generate_discount_code(prefix: str = "OFF") -> str:
-    token = uuid.uuid4().hex[:6].upper()
-    return f"{prefix}{ABANDONED_CART_DISCOUNT_PERCENT}-{token}"
-
-def _parse_discount_input(text: str, total: int) -> Optional[dict]:
-    parts = text.strip().split()
-    if len(parts) < 2:
-        return None
-
-    code = parts[0]
-    rest = " ".join(parts[1:])
-    percent_match = re.search(r"(\d+(?:\.\d+)?)\s*%", rest)
-    if percent_match:
-        percent = float(percent_match.group(1))
-        amount = int(round(total * percent / 100))
-        return {
-            "code": code,
-            "type": "percent",
-            "value": percent,
-            "amount": amount,
-        }
-
-    number_match = re.search(r"\d[\d,]*", rest)
-    if not number_match:
-        return None
-
-    amount = int(number_match.group(0).replace(",", ""))
-    return {
-        "code": code,
-        "type": "amount",
-        "value": amount,
-        "amount": amount,
-    }
-
-def _parse_profit_input(text: str) -> Optional[Tuple[int, int]]:
-    numbers = re.findall(r"\d[\d,]*", text)
-    if not numbers:
-        return None
-    purchase_total = int(numbers[0].replace(",", ""))
-    shipping_cost = int(numbers[1].replace(",", "")) if len(numbers) > 1 else 0
-    return purchase_total, shipping_cost
-
-def _estimate_profit(order: dict) -> dict:
-    sale_total = int(order.get("total", 0) or 0)
-    discount_amount = int(order.get("admin_discount_amount", 0) or 0)
-    shipping_cost = int(order.get("shipping_cost", 0) or 0)
-    purchase_total = int(order.get("purchase_total", 0) or 0)
-    profit = sale_total - discount_amount - shipping_cost - purchase_total
-    return {
-        "sale_total": sale_total,
-        "discount_amount": discount_amount,
-        "shipping_cost": shipping_cost,
-        "purchase_total": purchase_total,
-        "profit": profit,
-    }
-
-
-def _order_is_unpaid(order: dict) -> bool:
-    unpaid_statuses = {"awaiting_receipt", "receipt_submitted", "receipt_rejected"}
-    return order.get("status") in unpaid_statuses
-
-
-def _abandoned_order_age_hours(order: dict) -> Optional[float]:
-    created_at = _parse_iso_datetime(order.get("created_at"))
-    if not created_at:
-        return None
-    now = datetime.now(timezone.utc)
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    return (now - created_at).total_seconds() / 3600
-
-
-def _abandoned_report_lines(order: dict, age_hours: float) -> str:
-    username = order.get("username") or "—"
-    chat_id = order.get("user_chat_id") or "—"
-    return (
-        f"• OrderID: {order.get('order_id')}\n"
-        f"  کاربر: `@{username}` | ChatID: `{chat_id}`\n"
-        f"  وضعیت: {order.get('status')} | مبلغ: {_ftm_toman(int(order.get('total', 0) or 0))}\n"
-        f"  سن سبد: {age_hours:.1f} ساعت | کد تخفیف: {order.get('abandoned_discount_code') or '—'}"
-    )
-async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-
-    admin_id = _ensure_admin_chat_id()
-
-    if not admin_id:
-
-        return
-
-    if update.effective_chat.id != admin_id:
-
-        return
-
-async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    admin_id = _ensure_admin_chat_id()
-    if not admin_id:
-        return
-    if update.effective_chat.id != admin_id:
-        return
-
-    """Admin types a message after pressing 'مشکل دارد' to send to user."""
-    if not update.message:
-        return
-    
-    pending_track = context.bot_data.get("admin_pending_tracking")
-    if pending_track:
-        order_id = pending_track["order_id"]
-        order = STORE.find_order(order_id)
-    if not update.message:
-        return
-    
-    pending_discount = context.bot_data.get("admin_pending_discount")
-    if pending_discount:
-        order_id = pending_discount["order_id"]
-        order = STORE.find_order(order_id)
-        if not order:
-            await update.message.reply_text("❌ سفارش پیدا نشد.")
-            context.bot_data.pop("admin_pending_discount", None)
-            return
-
-        parsed = _parse_discount_input(update.message.text, int(order.get("total", 0) or 0))
-        if not parsed:
-            await update.message.reply_text(
-                "❌ فرمت کد تخفیف نامعتبر است.\n"
-                "مثال: `OFF10 10%` یا `OFF500 50000`",
-                parse_mode="Markdown",
-            )
-            return
-
-        STORE.update_order(
-            order_id,
-            admin_discount_code=parsed["code"],
-            admin_discount_type=parsed["type"],
-            admin_discount_value=parsed["value"],
-            admin_discount_amount=parsed["amount"],
-            discount_registered_at=datetime.utcnow().isoformat() + "Z",
-        )
-        _order_log(
-            order_id,
-            "admin",
-            f"کد تخفیف ثبت شد: {parsed['code']} ({parsed['amount']:,} تومان)",
-        )
-
-        await update.message.reply_text(
-            "✅ کد تخفیف ثبت شد.\n"
-            f"کد: {parsed['code']}\n"
-            f"مبلغ تخفیف: {_ftm_toman(parsed['amount'])}",
-        )
+    if data.startswith("ship:need_track:"):
+        _, _, order_id = data.split(":", 2)
+        context.bot_data["admin_pending_tracking"] = {"order_id": order_id}
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"🛠 کنترل سفارش `{order_id}`",
-            parse_mode="Markdown",
-            reply_markup=admin_panel_keyboard(order_id),
+            text="🔎 لطفاً کد رهگیری پست را تایپ کنید:"
         )
-        context.bot_data.pop("admin_pending_discount", None)
+        await q.answer("منتظر کد رهگیری…", show_alert=False)
         return
 
-    pending_profit = context.bot_data.get("admin_pending_profit")
-    if pending_profit:
-        order_id = pending_profit["order_id"]
-        order = STORE.find_order(order_id)
-        if not order:
-            await update.message.reply_text("❌ سفارش پیدا نشد.")
-            context.bot_data.pop("admin_pending_profit", None)
-            return
-
-        parsed = _parse_profit_input(update.message.text)
-        if not parsed:
-            await update.message.reply_text(
-                "❌ فرمت نامعتبر است.\n"
-                "مثال: `1200000 50000` (قیمت خرید کل / هزینه ارسال)",
-                parse_mode="Markdown",
-            )
-            return
-
-        purchase_total, shipping_cost = parsed
-        STORE.update_order(
-            order_id,
-            purchase_total=purchase_total,
-            shipping_cost=shipping_cost,
-            profit_estimated_at=datetime.utcnow().isoformat() + "Z",
-        )
-        profit_data = _estimate_profit(STORE.find_order(order_id) or order)
-        _order_log(
-            order_id,
-            "admin",
-            f"سود تقریبی محاسبه شد: {profit_data['profit']:,} تومان",
-        )
-
-        await update.message.reply_text(
-            "📊 سود تقریبی سفارش:\n"
-            f"فروش: {_ftm_toman(profit_data['sale_total'])}\n"
-            f"قیمت خرید: {_ftm_toman(profit_data['purchase_total'])}\n"
-            f"تخفیف: {_ftm_toman(profit_data['discount_amount'])}\n"
-            f"هزینه ارسال: {_ftm_toman(profit_data['shipping_cost'])}\n"
-            f"سود تقریبی: {_ftm_toman(profit_data['profit'])}",
-        )
+    
+    if data.startswith("admin:msg:"):
+        _, _, order_id = data.split(":", 2)
+        context.bot_data["admin_pending_msg"] = {"order_id": order_id}
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"🛠 کنترل سفارش `{order_id}`",
-            parse_mode="Markdown",
-            reply_markup=admin_panel_keyboard(order_id),
+            text="✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:"
         )
-        context.bot_data.pop("admin_pending_profit", None)
+
+        await q.answer("منتظر پیام…", show_alert=False)
         return
 
-    pending_track = context.bot_data.get("admin_pending_tracking")
-    if pending_track:
-        order_id = pending_track["order_id"]
-        order = STORE.find_order(order_id)
-
-        if not order:
-            await update.message.reply_text("❌ سفارش پیدا نشد.")
-            context.bot_data.pop("admin_pending_tracking", None)
+    
+    
+    if data.startswith("catalog:choose:"):
+        parts = data.split(":", 6)
+        if len(parts) != 7:
+            await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
             return
-
-        track = update.message.text.strip()
-
-        # ذخیره وضعیت ارسال
-        STORE.update_order(order_id, shipping_status="shipped", tracking_code=track)
-        _order_log(order_id, "admin", f"تحویل پست شد. کد رهگیری: {track}")
-
-        # ✅ ارسال پیام به مشتری (بدون Markdown برای جلوگیری از خطا)
+        _, _, gender, category_safe, product_id, color_index_str, size = parts
+        category = CATEGORY_MAP.get(category_safe, category_safe)
+    
+        p = _find_product(gender, category, product_id)
+        if not p or "variants" not in p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+    
         try:
-            await context.bot.send_message(
-                chat_id=int(order["user_chat_id"]),
-                text=(
-                    "🚚 سفارش شما ارسال شد.\n"
-                    f"🧾 شماره سفارش: {order_id}\n"
-                    f"🔎 کد رهگیری: {track}"
-                ),
-                reply_markup=main_menu_reply()
-            )
-        except Exception as e:
-            logger.error("Failed to send tracking to user: %s", e)
+            color_index = int(color_index_str)
+            colors = list(p["variants"].keys())
+            if color_index < 0 or color_index >= len(colors):
+                raise ValueError("Invalid color index")
+            color = colors[color_index]
+        except (ValueError, IndexError):
+            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            return
     
-# ---- manual payment / receipt callbacks ----
-    if data.startswith("receipt:start:"):
+        await show_qty_picker_combined(update, context, gender, category, product_id, color, size)
+        return
+        
+       
+    # این بخش برای یک روال قدیمی‌تر است که در ask_color_and_size کنونی استفاده نمی‌شود
+    if data.startswith("catalog:color:"):
+        _, _, gender, category_safe, product_id, color_safe = data.split(":", 5)
+        category = CATEGORY_MAP.get(category_safe, category_safe)
+    
+        p = _find_product(gender, category, product_id)
+        if not p or "variants" not in p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+    
+        color = _unsafe_color(color_safe, p["variants"])
+        if not color:
+            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            return
+    
+        await after_color_ask_size(update, context, gender, category, product_id, color)
+        return
+        
+    if data.startswith("catalog:size:"):
+        _, _, chosen_size = data.split(":" , 2)
+        await show_qty_picker(update, context, chosen_size) ; return
+        
+    
+
+    if data == "qty:inc":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True)
+            return
+        if pend["qty"] < pend["available"]:
+            pend["qty"] += 1
+        else:
+            await q.answer("به حداکثر موجودی فروشگاه رسیدی" , show_alert=False)
+        
+        cap = (
+            f"{pend['name']}"
+            f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
+            f"\nموجودی:{pend['available']}"
+            f"\nقیمت واحد : {_ftm_toman(pend['price'])}"
+            f"\nقیمت نهایی: {_ftm_toman(pend['price'] * pend['qty'])}"
+        )
+        try:
+            # سعی در ویرایش کپشن (اگر پیام قبلی عکس‌دار باشد)
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        except Exception:
+            # اگر نشد، پیام را به صورت متنی ویرایش کن
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        return
+    
+    
+    if data == "qty:dec":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
+        if pend["qty"] > 1 :
+            pend["qty"] -= 1
+        else:
+            await q.answer("حداقل تعداد 1 است ", show_alert=False)
+        cap = (
+            f"{pend['name']}"
+            f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
+            f"\nموجودی:{pend['available']}"
+            f"\nقیمت واحد:{_ftm_toman(pend['price'])}"
+            f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend['qty'])}"
+        )
+        try:
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        except Exception:
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        return
+    
+    if data == "qty:add":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
+        item = {
+            "product_id" : pend["product_id"] ,
+            "gender" : pend["gender"] , 
+            "category" : pend["category"] , 
+            "name" : pend["name"] , 
+            "color" : pend.get("color") , 
+            "size" : pend.get("size") , 
+            "qty" : pend["qty"] , 
+            "price" : pend["price"] ,  
+        }
+        cart = context.user_data.setdefault("cart" , [])
+        _merge_cart_item(cart , item)
+        context.user_data.pop("pending" , None)
+
+        # 🟢 تغییر: افزودن پیام هشدار (درخواستی کاربر)
+        warning_message = (
+            "✅ مشتری گرامی، **کالا مورد نظر به سبد خرید شما اضافه شده**.\n\n"
+            "⚠️ **لطفاً توجه داشته باشید** که تا پرداخت نهایی، کالا متعلق به شما نمی‌باشد و "
+            "اگر مشتری دیگری زودتر پرداخت را انجام دهد، متأسفانه کالا برای ایشان ثبت می‌شود و "
+            "گاهی ممکن است همان لحظه موجودی فروشگاه تمام شود.\n\n"
+            "با تشکر، مدیریت فروشگاه ..."
+        )
+        
+        await context.bot.send_message(
+            chat_id=q.message.chat_id,
+            text=warning_message,
+            parse_mode="Markdown"
+        )
+        # ----------------------------------------------------
+
+        txt = "می‌تونی به خرید ادامه بدی یا سبد خرید رو مشاهده کنی"
+        await q.message.reply_text(
+            txt,
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
+                [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
+            ])
+        )
+        return
+
+    if data == "qty:noop":
+        await q.answer("---" , show_alert=False) ; return
+    
+
+    
+    if data == "flow:cancel":
+        """
+        انصراف از جریان انتخاب محصول (سایز/تعداد).
+        خواستهٔ شما: پیام انتخاب محصول/تعداد (همین پیام فعلی) پاک شود و سپس صفحهٔ قبلی نمایش داده شود.
+        """
+        pend = context.user_data.get("pending") or {}
+        gender = pend.get("gender")
+        category = pend.get("category")
+
+        # پاکسازی وضعیت انتخاب فعلی
+        context.user_data.pop("pending", None)
+        context.user_data["awaiting"] = None
+
+        # ✅ پاک کردن پیام فعلی (پیام محصول/انتخاب سایز/تعداد)
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.callback_query.message.message_id)
+        except Exception:
+            pass
+
+        # برگشت به مرحله مناسب
+        if gender and category:
+            await show_products(update, context, gender, category)
+        else:
+            await show_cart(update, context)
+        return
+
+
+    # checkout:begin توسط ConversationHandler در entry_points مدیریت می‌شود.
+    # اگر این کد اجرا شود، یعنی ConversationHandler موفق به آغاز نشده است.
+    if data == "checkout:begin":
+        await q.answer("❌ خطا در اجرای فرم. لطفاً یک بار دیگر تلاش کنید.", show_alert=True)
+        await show_cart(update, context)
+        return
+    
+
+    if data == "checkout:pay":
+        await checkout_pay(update , context) ; return
+    
+    # نیاز به هندلر برای لغو سفارش
+    if data == "checkout:cancel":
+        context.user_data.pop("cart" , None)
+        context.user_data.pop("customer" , None)
+        context.user_data.pop("pending" , None)
+        context.user_data['awaiting'] = None
+        await q.edit_message_text("❌ سفارش لغو شد. سبد خرید خالی شد.", reply_markup=main_menu())
+        # ✅ بازگرداندن منوی اصلی (Reply Keyboard)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="از منوی پایین می‌تونی ادامه بدی.",
+            reply_markup=main_menu_reply(),
+        )
+        return
+
+    if data.startswith("checkout:verify:"):
         _, _, order_id = data.split(":", 2)
-        await receipt_start(update, context, order_id)
-        return
+        await checkout_verify(update, context, order_id); return
+    
 
-    if data == "receipt:cancel":
-        await receipt_cancel(update, context)
-        return
-
-    if data.startswith("admin:approve:"):
-        _, _, order_id = data.split(":", 2)
-        await admin_approve(update, context, order_id)
-        return
-
-    if data.startswith("admin:reject:"):
-        _, _, order_id = data.split(":", 2)
-        await admin_reject_start(update, context, order_id)
-        return
-    # ---- end manual payment / receipt callbacks ----
-    if data.startswith("admin:reject:"):
-        _, _, order_id = data.split(":", 2)
-        await admin_reject_start(update, context, order_id)
-        return
-    # ---- end manual payment / receipt callbacks ----
+    await q.edit_message_text("❌ گزینه نامعتبر.", reply_markup=main_menu())
 
 
+#        /start و اجرای برنامه
+# ساخت اپلیکیشن PTB
+application = Application.builder().token(BOT_TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("admin", admin_register))
+application.add_handler(CommandHandler("myid", my_id))
+application.add_handler(CommandHandler("dashboard", admin_dashboard))
+application.add_handler(CommandHandler("sales", admin_dashboard))
 
-def build_app() -> Application:
-    if not BOT_TOKEN:
-        raise RuntimeError('BOT_TOKEN is not set')
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    # commands
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('admin', admin_register))
-    app.add_handler(CommandHandler('sales', admin_sales_dashboard))
-    app.add_handler(CommandHandler('myid', my_id))
-    # callbacks (InlineKeyboard buttons)
-    app.add_handler(CallbackQueryHandler(menu_router))
-    # messages
-    app.add_handler(MessageHandler(filters.PHOTO, on_receipt_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-    return app
+# Conversation Handler برای فرم مشتری
+conv_handler = ConversationHandler(
+    # ⭐️ (اصلاح) entry_points: شروع مکالمه با زدن دکمه "ثبت سفارش و پرداخت" یا "ویرایش مشخصات" ⭐️
+    entry_points=[CallbackQueryHandler(begin_customer_form, pattern=r"^checkout:begin$")],
+    states={
+        CUSTOMER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
+        CUSTOMER_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text), MessageHandler(filters.CONTACT, on_contact)],
+        CUSTOMER_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
+        CUSTOMER_POSTAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
+    },
+    # ⭐️ fallbacks: بازگشت به سبد خرید در صورت انصراف ⭐️
+    fallbacks=[CallbackQueryHandler(menu_router, pattern=r"^flow:cancel$")]
+)
+application.add_handler(conv_handler)
 
-def main() -> None:
-    app = build_app()
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__ == '__main__':
-    main()
+# هندلرهای اصلی (بعد از Conversation Handler)
+application.add_handler(CallbackQueryHandler(menu_router))
+
+# Receipt photo handler (user uploads)
+application.add_handler(MessageHandler(filters.PHOTO, on_receipt_photo))
+
+# Admin text reply handler (when admin writes a reason for rejection)
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_text_reply),group=1)
+
+# هندلر برای Reply Keyboard (منوهای پایین صفحه)
+menu_reply_handler = MessageHandler(
+    filters.TEXT & ~filters.COMMAND,
+    menu_reply_router
+)
+application.add_handler(menu_reply_handler)
+
+
+# اجرای event loop در پس‌زمینه
+LOOP = asyncio.new_event_loop()
+def _run_loop_forever():
+    asyncio.set_event_loop(LOOP)
+    LOOP.run_forever()
+threading.Thread(target=_run_loop_forever, daemon=True).start()
+
+# ست کردن webhook
+RENDER_HOST = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+WEBHOOK_URL = f"https://{RENDER_HOST}/webhook/{BOT_TOKEN}"
+
+async def _ptb_init_and_webhook():
+    try:
+        await application.initialize()
+        await application.start()
+        await application.bot.set_webhook(
+            url=WEBHOOK_URL,
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
+        logger.info(f"Webhook set to: {WEBHOOK_URL}")
+    except Exception as e:
+        logger.error("Failed to set webhook: %s", e)
+        
+# اجرای تنظیمات PTB در لوپ اصلی
+asyncio.run_coroutine_threadsafe(_ptb_init_and_webhook(), LOOP)
+
+# Flask app
+flask_app = Flask(__name__)
+
+@flask_app.route("/", methods=["GET", "HEAD"])
+def health():
+    return "Bot is running", 200
+
+@flask_app.post(f"/webhook/{BOT_TOKEN}")
+def telegram_webhook():
+    try:
+        data = request.get_json(force=True)
+        # استفاده از application.update_queue.put_nowait برای فرستادن آپدیت به لوپ PTB
+        # تا از خطا در thread اصلی وب‌هو‌ک جلوگیری شود.
+        logger.info("Received Update JSON: %s", data)
+        update = Update.de_json(data, application.bot)
+        asyncio.run_coroutine_threadsafe(application.process_update(update), LOOP) 
+        return "OK", 200
+    except Exception as e:
+        logger.exception("webhook handler error: %s", e)
+        return "ERROR", 500
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "10000"))
+    # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
+    # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
+    flask_app.run(host="0.0.0.0", port=port, debug=False)
+
+
