@@ -87,6 +87,29 @@ def _is_admin_user_from_message(msg) -> bool:
     uname = _normalize_username(getattr(user, "username", None))
     return bool(uname and uname in _allowed_admin_usernames)
 
+
+
+def _is_admin_activated(update: Update) -> bool:
+    """ادمین زمانی فعال است که هم مجاز باشد و هم همین چت با /admin ثبت شده باشد."""
+    if not _is_admin_activated(update):
+        return False
+    try:
+        chat_id = update.effective_chat.id
+    except Exception:
+        return False
+    return int(chat_id) in [int(x) for x in _get_admin_chat_ids()]
+
+
+def _is_admin_activated_from_message(msg) -> bool:
+    """نسخهٔ پیام‌محور (برای وقتی که Update نداریم)."""
+    if not _is_admin_user_from_message(msg):
+        return False
+    try:
+        chat_id = msg.chat.id
+    except Exception:
+        return False
+    return int(chat_id) in [int(x) for x in _get_admin_chat_ids()]
+
 # ----------------------------------------------------------
 
 
@@ -924,9 +947,9 @@ async def start(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
              await context.bot.send_message(update.effective_chat.id, text)
              
         # ارسال یک پیام جدید با Reply Keyboard
-        await q.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await q.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
     else:
-        await update.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text(text , reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
 
 
 #     نمایش مراحل
@@ -940,7 +963,7 @@ async def admin_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # 🔒 جلوگیری از ادمین شدن افراد ناشناس
     if not _is_admin_user(update):
-        await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
         return
 
     global ADMIN_CHAT_ID
@@ -970,14 +993,46 @@ async def admin_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=main_menu_reply(is_admin=True)
     )
 
+
+async def admin_unregister(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """خروج از حالت ادمین برای این چت (حذف چت از لیست دریافت رسید/هشدار). فقط ادمین‌های مجاز."""
+    if not update.message:
+        return
+
+    if not _is_admin_activated(update):
+        await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
+        return
+
+    chat_id = update.effective_chat.id
+
+    try:
+        lst = STORE.data.get("admin_chat_ids") or []
+        if not isinstance(lst, list):
+            lst = [lst] if lst else []
+        lst = [x for x in lst if str(x) != str(chat_id)]
+        STORE.data["admin_chat_ids"] = lst
+
+        # اگر legacy روی همین چت بود، پاکش کن
+        if str(STORE.data.get("admin_chat_id") or "") == str(chat_id):
+            STORE.data["admin_chat_id"] = None
+
+        STORE.save()
+    except Exception:
+        pass
+
+    await update.message.reply_text(
+        "✅ این چت از حالت ادمین خارج شد. (دیگر رسید/هشدارها به این چت ارسال نمی‌شود.)",
+        reply_markup=main_menu_reply(is_admin=_is_admin_activated(update))
+    )
+
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """داشبورد فروش روزانه/هفتگی/ماهیانه (فقط ادمین)."""
-    # 🔒 فقط ادمین‌های مجاز
-    if not _is_admin_user(update):
+    """داشبورد فروش روزانه/هفتگی/ماهیانه (فقط ادمینِ فعال‌شده با /admin)."""
+    # 🔒 فقط ادمینِ فعال‌شده (اول /admin در همین چت)
+    if not _is_admin_activated(update):
         if update.message:
-            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+            await update.message.reply_text("⛔️ ابتدا در همین چت دستور /admin را بزنید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
         elif update.callback_query:
-            await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+            await update.callback_query.answer("⛔️ ابتدا در همین چت /admin را بزنید.", show_alert=True)
         return
 
     orders = STORE.data.get("orders", []) or []
@@ -1509,7 +1564,7 @@ async def show_my_order_status(update: Update, context: ContextTypes.DEFAULT_TYP
 
     mine = [o for o in orders if int(o.get("user_chat_id", 0)) == int(chat_id)]
     if not mine:
-        await update.message.reply_text("هنوز سفارشی برای شما ثبت نشده است.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text("هنوز سفارشی برای شما ثبت نشده است.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
         return
 
     # آخرین سفارش
@@ -1534,7 +1589,7 @@ async def show_my_order_status(update: Update, context: ContextTypes.DEFAULT_TYP
         text += f"\nآخرین تغییر: {h.get('text')}"
 
 
-    await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+    await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
 
 
 
@@ -1559,8 +1614,8 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await show_my_order_status(update, context)
 
     elif text == "📊 داشبورد فروش":
-        if not _is_admin_user(update):
-            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        if not _is_admin_activated(update):
+            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
             return
         await admin_dashboard(update, context)
 
@@ -1609,7 +1664,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("customer", None)
         context.user_data.pop("pending", None)
         context.user_data["awaiting"] = None
-        await update.message.reply_text("❌ فرم لغو شد. از منوی پایین استفاده کن.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text("❌ فرم لغو شد. از منوی پایین استفاده کن.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
         # بازگشت به سبد (اختیاری)
         await show_cart(update, context)
         return ConversationHandler.END
@@ -1695,9 +1750,9 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     
     # آیا این کاربر ادمین مجاز است؟ (برای نمایش گزینه داشبورد در Reply Keyboard)
     if isinstance(update_or_msg, Update):
-        is_admin = _is_admin_user(update_or_msg)
+        is_admin = _is_admin_activated(update_or_msg)
     else:
-        is_admin = _is_admin_user_from_message(update_or_msg)
+        is_admin = _is_admin_activated_from_message(update_or_msg)
 
     send = context.bot.send_message
     
@@ -1966,7 +2021,7 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     order = STORE.find_order(order_id)
     if not order:
         context.user_data.pop("awaiting_receipt", None)
-        await update.message.reply_text("❌ سفارش پیدا نشد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text("❌ سفارش پیدا نشد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
         return
 
     # take best quality
@@ -2036,7 +2091,7 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
     await q.answer()
 
     # 🔒 فقط ادمین‌های مجاز
-    if not _is_admin_user(update):
+    if not _is_admin_activated(update):
         await q.answer("دسترسی ندارید.", show_alert=True)
         return
 
@@ -2083,7 +2138,7 @@ async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await q.answer()
 
     # 🔒 فقط ادمین‌های مجاز
-    if not _is_admin_user(update):
+    if not _is_admin_activated(update):
         await q.answer("دسترسی ندارید.", show_alert=True)
         return
 
@@ -2119,7 +2174,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     # 🔒 فقط ادمین‌های مجاز
-    if not _is_admin_user(update):
+    if not _is_admin_activated(update):
         return
 
     chat_id = update.effective_chat.id
@@ -2495,10 +2550,10 @@ async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="⬇️ از منوی پایین هم می‌تونی استفاده کنی.",
-            reply_markup=main_menu_reply(is_admin=_is_admin_user(update))
+            reply_markup=main_menu_reply(is_admin=_is_admin_activated(update))
         )
     else:
-        await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_user(update)))
+        await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
 
 #      روتر کلی دکمه ها 
 async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None :
@@ -2507,7 +2562,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     data = (q.data or "").strip()
 
     # 🔒 دسترسی به callback های ادمین
-    if (data.startswith("admin:") or data.startswith("ship:")) and not _is_admin_user(update):
+    if (data.startswith("admin:") or data.startswith("ship:")) and not _is_admin_activated(update):
         await q.answer("⛔️ دسترسی ندارید.", show_alert=True)
         return
 
@@ -2969,7 +3024,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="از منوی پایین می‌تونی ادامه بدی.",
-            reply_markup=main_menu_reply(is_admin=_is_admin_user(update)),
+            reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)),
         )
         return
 
@@ -2986,6 +3041,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 application = Application.builder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("admin", admin_register))
+application.add_handler(CommandHandler("unadmin", admin_unregister))
 application.add_handler(CommandHandler("myid", my_id))
 application.add_handler(CommandHandler("dashboard", admin_dashboard))
 application.add_handler(CommandHandler("sales", admin_dashboard))
@@ -3076,4 +3132,3 @@ if __name__ == "__main__":
     # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
     # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
     flask_app.run(host="0.0.0.0", port=port, debug=False)
-
