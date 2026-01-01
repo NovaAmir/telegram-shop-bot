@@ -2421,9 +2421,19 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("ابتدا روش ارسال را انتخاب کنید.", show_alert=True)
         text = _build_checkout_summary_text(context)
         try:
-            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(None), parse_mode="Markdown")
-        except Exception:
-            pass
+            await q.edit_message_text(
+                text,
+                reply_markup=shipping_methods_keyboard(customer.get("shipping_method")),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.warning("checkout_pay: failed to edit message for shipping method choose: %s", e)
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=text,
+                reply_markup=shipping_methods_keyboard(customer.get("shipping_method")),
+                parse_mode="Markdown"
+            )
         return
 
 
