@@ -441,6 +441,7 @@ def main_menu_reply(is_admin: bool = False) -> ReplyKeyboardMarkup:
     ]
     if is_admin:
         keyboard.append(["📊 داشبورد فروش"])
+        keyboard.append(["🚪 خروج از ادمین"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
 def form_keyboard() -> ReplyKeyboardMarkup:
@@ -1618,6 +1619,11 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
             return
         await admin_dashboard(update, context)
+
+
+    elif text == "🚪 خروج از ادمین":
+        # خروج از حالت ادمین برای همین چت
+        await admin_unregister(update, context)
 
 
 
