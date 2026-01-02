@@ -88,27 +88,25 @@ def _is_admin_user_from_message(msg) -> bool:
     return bool(uname and uname in _allowed_admin_usernames)
 
 
-
 def _is_admin_activated(update: Update) -> bool:
-    """ادمین زمانی فعال است که هم مجاز باشد و هم همین چت با /admin ثبت شده باشد."""
-    if not _is_admin_activated(update):
+    if not _is_admin_user(update):
         return False
     try:
-        chat_id = update.effective_chat.id
+        chat_id = int(update.effective_chat.id)
     except Exception:
         return False
-    return int(chat_id) in [int(x) for x in _get_admin_chat_ids()]
+    return chat_id in [int(x) for x in _get_admin_chat_ids()]
 
 
 def _is_admin_activated_from_message(msg) -> bool:
-    """نسخهٔ پیام‌محور (برای وقتی که Update نداریم)."""
     if not _is_admin_user_from_message(msg):
         return False
     try:
-        chat_id = msg.chat.id
+        chat_id = int(msg.chat.id)
     except Exception:
         return False
-    return int(chat_id) in [int(x) for x in _get_admin_chat_ids()]
+    return chat_id in [int(x) for x in _get_admin_chat_ids()]
+
 
 # ----------------------------------------------------------
 
