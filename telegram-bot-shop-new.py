@@ -412,7 +412,7 @@ ORDER_STATUS_FA = {
     "awaiting_receipt": "⏳ در انتظار ارسال رسید",
     "receipt_submitted": "📨 رسید ارسال شد",
     "receipt_rejected": "❌ رسید رد شد",
-    "paid": "💳 پرداخت آنلاین",
+    "paid": "💳 درگاه پرداخت",
     "paid_confirmed": "✅ پرداخت تایید شد",
     "fulfilled": "📦 تکمیل و ارسال شده",
 }
@@ -432,6 +432,7 @@ def main_menu_reply(is_admin: bool = False) -> ReplyKeyboardMarkup:
     ]
     if is_admin:
         keyboard.append(["📊 داشبورد فروش"])
+        keyboard.append(["📋 سفارش‌های آماده ارسال"])
         keyboard.append(["🚪 خروج از ادمین"])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -482,6 +483,179 @@ def admin_panel_keyboard(order_id: str) -> InlineKeyboardMarkup:
 
 
 
+
+# ------------------ Admin UI (single message) ------------------
+def _admin_ui_key(chat_id: int) -> str:
+    return f"admin_ui_msg:{int(chat_id)}"
+
+async def admin_ui_send_or_edit(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    text: str,
+    reply_markup=None,
+    parse_mode: Optional[str] = None,
+    disable_web_page_preview: bool = True,
+):
+    """یک پیام واحد برای کنترل سفارش‌ها در چت ادمین نگه می‌دارد تا شلوغ نشود."""
+    chat_id = update.effective_chat.id
+    key = _admin_ui_key(chat_id)
+    msg_id = context.bot_data.get(key)
+
+    # اگر از callback آمده، ترجیحاً همان پیام را edit کن
+    try:
+        if update.callback_query and update.callback_query.message:
+            msg_id = update.callback_query.message.message_id
+            context.bot_data[key] = msg_id
+    except Exception:
+        pass
+
+    if msg_id:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=int(msg_id),
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+            return
+        except Exception:
+            # اگر ادیت ممکن نبود، پیام جدید بفرست
+            pass
+
+    sent = await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        reply_markup=reply_markup,
+        parse_mode=parse_mode,
+        disable_web_page_preview=disable_web_page_preview,
+    )
+    context.bot_data[key] = sent.message_id
+
+
+def _admin_queue_orders() -> List[dict]:
+    """سفارش‌های آماده پردازش/ارسال برای نمایش به ادمین."""
+    orders = STORE.data.get("orders", []) or []
+    def _score(o: dict) -> str:
+        # مرتب‌سازی: جدیدترها بالاتر
+        return o.get("confirmed_at") or o.get("paid_at") or o.get("created_at") or ""
+    # فقط سفارش‌های پرداخت‌شده (آنلاین یا تایید دستی) که هنوز تحویل نشده‌اند
+    res = []
+    for o in orders:
+        st = o.get("status")
+        ship = o.get("shipping_status") or "pending"
+        if st in ("paid", "paid_confirmed") and ship != "delivered":
+            res.append(o)
+    res.sort(key=_score, reverse=True)
+    return res
+
+
+def admin_queue_keyboard(orders: List[dict], limit: int = 15) -> InlineKeyboardMarkup:
+    btns = []
+    for o in orders[:limit]:
+        oid = o.get("order_id")
+        if not oid:
+            continue
+        name = (o.get("customer") or {}).get("name") or "—"
+        ship = SHIP_STATUS_FA.get(o.get("shipping_status") or "pending", "—")
+        total = _ftm_toman(o.get("total", 0))
+        btns.append([InlineKeyboardButton(f"🧾 {oid} | {name} | {ship} | {total}", callback_data=f"admin:open:{oid}")])
+    controls = [
+        [InlineKeyboardButton("🔄 بروزرسانی لیست", callback_data="admin:queue")],
+        [InlineKeyboardButton("📊 داشبورد فروش", callback_data="admin:dashboard")],
+    ]
+    return InlineKeyboardMarkup(btns + controls)
+
+
+def admin_order_keyboard(order_id: str) -> InlineKeyboardMarkup:
+    # پنل + دکمه برگشت به لیست
+    rows = admin_panel_keyboard(order_id).inline_keyboard
+    rows = [[InlineKeyboardButton("⬅️ برگشت به لیست سفارش‌ها", callback_data="admin:queue")]] + rows
+    return InlineKeyboardMarkup(rows)
+
+
+async def admin_queue_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin_activated(update):
+        if update.message:
+            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
+        elif update.callback_query:
+            await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
+    orders = _admin_queue_orders()
+    if not orders:
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="📋 *سفارشِ آماده‌ای برای پردازش/ارسال ندارید.*\n\n(درگاه پرداخت یا تاییدشده توسط ادمین)",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 داشبورد فروش", callback_data="admin:dashboard")]]),
+        )
+        return
+
+    await admin_ui_send_or_edit(
+        update,
+        context,
+        text=f"📋 *سفارش‌های آماده ارسال*\nتعداد: `{len(orders)}`\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
+        parse_mode="Markdown",
+        reply_markup=admin_queue_keyboard(orders),
+    )
+
+
+def _admin_order_summary(order: dict) -> str:
+    oid = order.get("order_id")
+    cust = order.get("customer") or {}
+    ship_method = (cust.get("shipping_method") or "").strip()
+    ship_method_label = SHIPPING_METHODS.get(ship_method, {}).get("label") if ship_method else None
+    pay_label = PAY_STATUS_FA.get(order.get("status") or "", order.get("status") or "—")
+    ship_label = SHIP_STATUS_FA.get(order.get("shipping_status") or "pending", "—")
+    track = order.get("tracking_code") or "ثبت نشده"
+    items = order.get("items") or []
+    lines = [f"🧾 *سفارش* `{oid}`",
+             f"👤 نام: {cust.get('name') or '—'}",
+             f"📞 موبایل: {cust.get('phone') or '—'}",
+             f"📍 آدرس: {cust.get('address') or '—'}",
+             f"🏷 کدپستی: {cust.get('postal') or '—'}",
+             f"🚚 روش ارسال: {ship_method_label or ship_method or '—'}",
+             f"💳 پرداخت: {pay_label}",
+             f"📦 وضعیت ارسال: {ship_label}",
+             f"🔎 کد رهگیری: {track}",
+             "",
+             f"💰 مبلغ کل: *{_ftm_toman(order.get('total', 0))}*",
+             "",
+             "🛒 اقلام:"]
+    for it in items:
+        pname = it.get("name") or it.get("product") or "—"
+        size = it.get("size") or "—"
+        qty = it.get("qty") or 1
+        price = _ftm_toman(it.get("price", 0))
+        lines.append(f"• {pname} | سایز: `{size}` | تعداد: `{qty}` | قیمت: {price}")
+    return "\n".join(lines)
+
+
+async def admin_open_order(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    if not _is_admin_activated(update):
+        if update.callback_query:
+            await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
+    order = STORE.find_order(order_id)
+    if not order:
+        if update.callback_query:
+            await update.callback_query.answer("سفارش پیدا نشد.", show_alert=True)
+        else:
+            await update.message.reply_text("❌ سفارش پیدا نشد.")
+        return
+
+    await admin_ui_send_or_edit(
+        update,
+        context,
+        text=_admin_order_summary(order),
+        parse_mode="Markdown",
+        reply_markup=admin_order_keyboard(order_id),
+    )
 
 # ------------------ Shipping methods ------------------
 # روش‌های ارسال (فعلاً هزینه ثابت/صفر؛ بعداً می‌توانید برای هر روش مبلغ تعیین کنید)
@@ -1094,6 +1268,7 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 بروزرسانی داشبورد", callback_data="admin:dashboard")],
+        [InlineKeyboardButton("📋 سفارش‌های آماده ارسال", callback_data="admin:queue")],
     ])
 
     if update.message:
@@ -1608,6 +1783,13 @@ async def menu_reply_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
             return
         await admin_dashboard(update, context)
+
+
+    elif text == "📋 سفارش‌های آماده ارسال":
+        if not _is_admin_activated(update):
+            await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
+            return
+        await admin_queue_show(update, context)
 
 
     elif text == "🚪 خروج از ادمین":
@@ -2226,8 +2408,15 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         track = text
 
         # ذخیره وضعیت ارسال
-        STORE.update_order(order_id, shipping_status="shipped", tracking_code=track)
-        _order_log(order_id, "admin", f"تحویل پست شد. کد رهگیری: {track}")
+        STORE.update_order(
+            order_id,
+            shipping_status="shipped",
+            tracking_code=track,
+            status="fulfilled",
+            fulfilled_at=datetime.utcnow().isoformat() + "Z"
+        )
+
+        _order_log(order_id, "admin", f"ارسال شد. کد رهگیری: {track}")
 
         # ارسال پیام به مشتری (بدون Markdown برای جلوگیری از خطا)
         try:
@@ -2251,13 +2440,29 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 context.bot_data.pop("admin_pending_tracking", None)
             return
 
-        # تایید به ادمین + نگه داشتن پنل
-        await update.message.reply_text("✅ کد رهگیری برای مشتری ارسال شد.")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"🛠 کنترل سفارش `{order_id}`",
+        # تایید به ادمین (آپدیت پنل واحد) + پاکسازی وضعیت انتظار
+        try:
+            # پیام راهنما و پیام ادمین را (در صورت امکان) پاک کن تا چت خلوت بماند
+            prompt_id = (pending_track or {}).get("prompt_msg_id")
+            if prompt_id:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=int(prompt_id))
+                except Exception:
+                    pass
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        order = STORE.find_order(order_id) or order
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="✅ *تحویل پست شد* و کد رهگیری برای مشتری ارسال شد.\n\n" + _admin_order_summary(order),
             parse_mode="Markdown",
-            reply_markup=admin_panel_keyboard(order_id)
+            reply_markup=admin_order_keyboard(order_id),
         )
 
         try:
@@ -2306,13 +2511,28 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 context.bot_data.pop("admin_pending_msg", None)
             return
 
-        # تایید به ادمین + نگه داشتن پنل
-        await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"🛠 کنترل سفارش `{order_id}`",
+        # تایید به ادمین (آپدیت پنل واحد) + پاکسازی وضعیت انتظار
+        try:
+            prompt_id = (pending_msg or {}).get("prompt_msg_id")
+            if prompt_id:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=int(prompt_id))
+                except Exception:
+                    pass
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        order = STORE.find_order(order_id) or order
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="✅ پیام برای مشتری ارسال شد.\n\n" + _admin_order_summary(order),
             parse_mode="Markdown",
-            reply_markup=admin_panel_keyboard(order_id)
+            reply_markup=admin_order_keyboard(order_id),
         )
 
         try:
@@ -2594,6 +2814,15 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data == "admin:dashboard":
         await admin_dashboard(update, context)
         return
+
+    if data == "admin:queue":
+        await admin_queue_show(update, context)
+        return
+
+    if data.startswith("admin:open:"):
+        _, _, order_id = data.split(":", 2)
+        await admin_open_order(update, context, order_id)
+        return
  
 
     logger.info(f"Received callback data: {data}")
@@ -2797,23 +3026,25 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         STORE.update_order(order_id, shipping_status="packed")
         _order_log(order_id, "admin", "بسته‌بندی شد.")
 
-    # پیام به مشتری
-        await context.bot.send_message(
-            chat_id=int(order["user_chat_id"]),
-            text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
-            parse_mode="Markdown",
-            reply_markup=main_menu_reply()
-        )
+        # پیام به مشتری
+        try:
+            await context.bot.send_message(
+                chat_id=int(order["user_chat_id"]),
+                text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
+                parse_mode="Markdown",
+                reply_markup=main_menu_reply()
+            )
+        except Exception as e:
+            logger.error("Failed to send packed msg to user: %s", e)
 
-    # ✅ پیام به ادمین
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=(
-                f"✅ انجام شد.\n"
-                f"سفارش `{order_id}` «بسته‌بندی شد» و پیام برای مشتری ارسال شد."
-            ),
+        # ✅ آپدیت پنل واحد ادمین (بدون شلوغ‌کاری)
+        order = STORE.find_order(order_id) or order
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="✅ وضعیت سفارش بروزرسانی شد: *بسته‌بندی شد*\n\n" + _admin_order_summary(order),
             parse_mode="Markdown",
-            reply_markup=admin_panel_keyboard(order_id)
+            reply_markup=admin_order_keyboard(order_id),
         )
 
         await q.answer("ثبت شد ✅")
@@ -2822,22 +3053,25 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     
     if data.startswith("ship:need_track:"):
         _, _, order_id = data.split(":", 2)
-        context.bot_data.setdefault("admin_pending_tracking", {})[update.effective_chat.id] = {"order_id": order_id}
-        await context.bot.send_message(
+        # ذخیره سفارش در وضعیت انتظار کد رهگیری (برای همین چت ادمین)
+        pending = context.bot_data.setdefault("admin_pending_tracking", {})
+        sent = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="🔎 لطفاً کد رهگیری پست را تایپ کنید:"
         )
+        pending[update.effective_chat.id] = {"order_id": order_id, "prompt_msg_id": sent.message_id}
         await q.answer("منتظر کد رهگیری…", show_alert=False)
         return
 
     
     if data.startswith("admin:msg:"):
         _, _, order_id = data.split(":", 2)
-        context.bot_data.setdefault("admin_pending_msg", {})[update.effective_chat.id] = {"order_id": order_id}
-        await context.bot.send_message(
+        pending = context.bot_data.setdefault("admin_pending_msg", {})
+        sent = await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:"
         )
+        pending[update.effective_chat.id] = {"order_id": order_id, "prompt_msg_id": sent.message_id}
 
         await q.answer("منتظر پیام…", show_alert=False)
         return
