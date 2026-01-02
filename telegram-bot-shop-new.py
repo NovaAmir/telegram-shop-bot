@@ -1863,6 +1863,27 @@ def _ensure_admin_chat_id() -> Optional[int]:
     ids = _get_admin_chat_ids()
     return ids[0] if ids else None
 
+
+
+def _clear_user_cart_after_paid(app, user_id: int) -> None:
+    """بعد از تایید پرداخت توسط ادمین، سبد و وضعیت‌های خرید کاربر را پاک می‌کند تا سفارش قبلی reuse نشود."""
+    if not user_id:
+        return
+
+    ud = app.user_data.get(int(user_id))
+    if not isinstance(ud, dict):
+        return
+
+    for k in (
+        "cart",
+        "customer",
+        "pending",
+        "awaiting",
+        "awaiting_receipt",
+        "active_order_id",
+        "current_order_id",
+    ):
+        ud.pop(k, None)
 def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
     """Create (or reuse) an order id for current user's cart+customer."""
     cart = context.user_data.get("cart", [])
@@ -1872,12 +1893,16 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
 
     existing = context.user_data.get("current_order_id")
     if existing and STORE.find_order(existing):
-        # sync shipping method/customer with latest user_data
+        # اگر سفارش قبلی نهایی/پرداخت شده باشد، نباید reuse شود.
         order = STORE.find_order(existing)
-        cust = dict(order.get("customer", {}))
-        cust.update(customer)  # customer جدید user_data
-        STORE.update_order(existing, customer=cust, shipping_method=cust.get("shipping_method"))
-        return existing
+        if order and (order.get("status") in PAID_STATUSES or order.get("status") == "cancelled"):
+            context.user_data.pop("current_order_id", None)
+        else:
+            # sync shipping method/customer with latest user_data
+            cust = dict((order or {}).get("customer", {}))
+            cust.update(customer)  # customer جدید user_data
+            STORE.update_order(existing, customer=cust, shipping_method=cust.get("shipping_method"))
+            return existing
 
 
     order_id = _make_order_id()
@@ -2001,6 +2026,7 @@ async def receipt_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     context.user_data.pop("awaiting_receipt", None)
     context.user_data.pop("active_order_id", None)
+    context.user_data.pop("current_order_id", None)
     await q.edit_message_text("انصراف داده شد. از منو می‌توانید ادامه دهید.", reply_markup=main_menu())
 
 
@@ -2104,6 +2130,9 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
     STORE.update_order(order_id, status="paid_confirmed", confirmed_at=datetime.utcnow().isoformat() + "Z", inventory_reserved=False, reserved_consumed_at=datetime.utcnow().isoformat() + "Z")
     _order_log(order_id, "admin", "پرداخت تایید شد. سفارش وارد مرحله پردازش شد.")
 
+
+    # ✅ پاکسازی سشن کاربر (سبد و current_order_id) تا سفارش پرداخت‌شده در خرید بعدی تکرار نشود
+    _clear_user_cart_after_paid(context.application, order.get("user_id"))
     admin_panel = admin_panel_keyboard(order_id)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
