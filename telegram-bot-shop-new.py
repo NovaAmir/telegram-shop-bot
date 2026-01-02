@@ -211,13 +211,6 @@ def _get_admin_chat_ids() -> List[int]:
     """
     ids = set()
 
-    # env (single)
-    if ADMIN_CHAT_ID:
-        try:
-            ids.add(int(ADMIN_CHAT_ID))
-        except Exception:
-            pass
-
     # env (multi)
     env_multi = os.getenv("ADMIN_CHAT_IDS", "").strip()
     if env_multi:
@@ -965,9 +958,7 @@ async def admin_register(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
         return
 
-    global ADMIN_CHAT_ID
     chat_id = update.effective_chat.id
-    ADMIN_CHAT_ID = str(chat_id)
     try:
         # ذخیره چند ادمین (لیست) + سازگاری با کلید قدیمی admin_chat_id
         lst = STORE.data.get("admin_chat_ids") or []
