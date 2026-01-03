@@ -907,6 +907,23 @@ def _order_log(order_id: str, by: str, text: str):
     STORE.update_order(order_id, history=hist)
 
 
+
+
+async def _safe_send_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, **kwargs) -> Tuple[bool, Optional[int], Optional[str]]:
+    """Send message to user and return (ok, message_id, error_text).
+
+    نکته مهم: تلگرام/بات‌ها «رسیدِ تحویل به کاربر» یا «seen» نمی‌دهند؛
+    فقط می‌توانیم مطمئن شویم پیام با موفقیت به سرورهای تلگرام تحویل داده شده است.
+    """
+    try:
+        msg = await context.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        return True, getattr(msg, "message_id", None), None
+    except Exception as e:
+        logger.error("Failed to send message to user chat_id=%s: %s", chat_id, e)
+        return False, None, str(e)
+
+
+
 def _photo_for_selection(p:Dict , color:Optional[str]) -> Optional[str]:
     if color and "variants" in p:
         return p["variants"][color].get("photo") or p.get("thumbnail") or p.get("photo")
@@ -2543,19 +2560,18 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         _order_log(order_id, "admin", f"ارسال شد. کد رهگیری: {track}")
 
-        # ارسال پیام به مشتری (بدون Markdown برای جلوگیری از خطا)
-        try:
-            await context.bot.send_message(
-                chat_id=int(order["user_chat_id"]),
-                text=(
-                    "🚚 سفارش شما ارسال شد.\n"
-                    f"🧾 شماره سفارش: {order_id}\n"
-                    f"🔎 کد رهگیری: {track}"
-                ),
-                reply_markup=main_menu_reply()
-            )
-        except Exception as e:
-            logger.error("Failed to send tracking to user: %s", e)
+        # ارسال پیام به مشتری
+        ok, mid, err = await _safe_send_message(
+            context,
+            chat_id=int(order["user_chat_id"]),
+            text=(
+                "🚚 سفارش شما ارسال شد.\n"
+                f"🧾 شماره سفارش: {order_id}\n"
+                f"🔎 کد رهگیری: {track}"
+            ),
+            reply_markup=main_menu_reply(),
+        )
+        if not ok:
             await update.message.reply_text("❌ ارسال کد رهگیری به مشتری ناموفق بود.")
             try:
                 track_map.pop(chat_id, None)
@@ -2564,6 +2580,8 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             except Exception:
                 context.bot_data.pop("admin_pending_tracking", None)
             return
+
+        _order_log(order_id, "system", f"پیام ارسال+کد رهگیری به مشتری شد. msg_id={mid}")
 
         # تایید به ادمین (آپدیت پنل واحد) + پاکسازی وضعیت انتظار
         try:
@@ -2585,7 +2603,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await admin_ui_send_or_edit(
             update,
             context,
-            text="✅ *تحویل پست شد* و کد رهگیری برای مشتری ارسال شد.\n\n" + _admin_order_summary(order),
+            text="✅ *تحویل پست شد* و کد رهگیری برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال شد\n🆔 msg_id: `" + str(mid) + "`\n\n" + _admin_order_summary(order),
             parse_mode="Markdown",
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
@@ -2620,14 +2638,13 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         _order_log(order_id, "admin", f"پیام ادمین به مشتری: {msg}")
 
         # ارسال پیام واقعی به مشتری
-        try:
-            await context.bot.send_message(
-                chat_id=int(order["user_chat_id"]),
-                text=f"✉️ پیام پشتیبانی درباره سفارش {order_id}:\n{msg}",
-                reply_markup=main_menu_reply()
-            )
-        except Exception as e:
-            logger.error("Failed to send admin message to user: %s", e)
+        ok, mid, err = await _safe_send_message(
+            context,
+            chat_id=int(order["user_chat_id"]),
+            text=f"✉️ پیام پشتیبانی درباره سفارش {order_id}:\n{msg}",
+            reply_markup=main_menu_reply(),
+        )
+        if not ok:
             await update.message.reply_text("❌ ارسال پیام به مشتری ناموفق بود (خطای تلگرام).")
             try:
                 msg_map.pop(chat_id, None)
@@ -2636,6 +2653,8 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             except Exception:
                 context.bot_data.pop("admin_pending_msg", None)
             return
+
+        _order_log(order_id, "system", f"پیام ادمین به مشتری ارسال شد. msg_id={mid}")
 
         # تایید به ادمین (آپدیت پنل واحد) + پاکسازی وضعیت انتظار
         try:
@@ -2656,7 +2675,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await admin_ui_send_or_edit(
             update,
             context,
-            text="✅ پیام برای مشتری ارسال شد.\n\n" + _admin_order_summary(order),
+            text="✅ پیام برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال\n🆔 msg_id: `" + str(mid) + "`\n\n" + _admin_order_summary(order),
             parse_mode="Markdown",
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
@@ -3157,23 +3176,27 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         STORE.update_order(order_id, shipping_status="packed")
         _order_log(order_id, "admin", "بسته‌بندی شد.")
 
-        # پیام به مشتری
-        try:
-            await context.bot.send_message(
-                chat_id=int(order["user_chat_id"]),
-                text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
-                parse_mode="Markdown",
-                reply_markup=main_menu_reply()
-            )
-        except Exception as e:
-            logger.error("Failed to send packed msg to user: %s", e)
+        # پیام به مشتری (تحویل به تلگرام)
+        ok, mid, err = await _safe_send_message(
+            context,
+            chat_id=int(order["user_chat_id"]),
+            text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
+            parse_mode="Markdown",
+            reply_markup=main_menu_reply(),
+        )
+        if ok:
+            _order_log(order_id, "system", f"پیام بسته‌بندی به مشتری ارسال شد. msg_id={mid}")
+            user_send_note = f"🟢 پیام به مشتری ارسال شد (تحویل تلگرام)\n🆔 msg_id: `{mid}`"
+        else:
+            _order_log(order_id, "system", f"ارسال پیام بسته‌بندی به مشتری ناموفق بود. err={err}")
+            user_send_note = "🔴 ارسال پیام به مشتری ناموفق بود (خطای تلگرام/مسدود بودن ربات)."
 
         # ✅ آپدیت پنل واحد ادمین (بدون شلوغ‌کاری)
         order = STORE.find_order(order_id) or order
         await admin_ui_send_or_edit(
             update,
             context,
-            text="✅ وضعیت سفارش بروزرسانی شد: *بسته‌بندی شد*\n\n" + _admin_order_summary(order),
+            text="✅ وضعیت سفارش بروزرسانی شد: *بسته‌بندی شد*\n" + user_send_note + "\n\n" + _admin_order_summary(order),
             parse_mode="Markdown",
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
