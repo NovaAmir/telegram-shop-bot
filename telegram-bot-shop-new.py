@@ -643,52 +643,53 @@ def admin_order_keyboard(order_id: str, back_to: str = "admin:queue") -> InlineK
 
 
 
-
-
 async def admin_ack_status(
     context: ContextTypes.DEFAULT_TYPE,
     *,
     admin_chat_id: int,
     base_message_id: Optional[int],
-    text: str,
+    ok: bool,
+    action: str,
+    customer_msg_id: Optional[int] = None,
+    err: Optional[str] = None,
 ) -> None:
+    """نمایش وضعیت ارسال پیام به مشتری در چت ادمین (Reply زیر پنل).
+
+    توجه: تلگرام برای بات‌ها رسید «تحویل به کاربر/seen» نمی‌دهد؛ این وضعیت یعنی
+    ارسال به سرورهای تلگرام موفق بوده یا با خطا مواجه شده (مثلاً کاربر بات را بلاک کرده).
     """
-    یک پیام وضعیت (✅/❌) را به صورت Reply زیر پیام پنل/دکمه‌ها در چت ادمین نمایش می‌دهد.
+    # پاک کردن پیام وضعیت قبلی (اگر وجود داشت) تا چت شلوغ نشود
+    last_key = f"admin_last_ack_msg:{int(admin_chat_id)}"
+    last_id = context.bot_data.get(last_key)
+    if last_id:
+        try:
+            await context.bot.delete_message(chat_id=admin_chat_id, message_id=int(last_id))
+        except Exception:
+            pass
 
-    نکته: تلگرام برای بات‌ها «رسید خوانده شدن» نمی‌دهد؛ این پیام فقط یعنی ارسال به تلگرام موفق/ناموفق بوده.
-    برای خلوت ماندن چت، پیام وضعیت قبلیِ همان ادمین (اگر قابل حذف باشد) حذف می‌شود.
-    """
-    key = f"admin_last_ack_msg:{admin_chat_id}"
+    if ok:
+        txt = f"✅ *{action}*: پیام به مشتری با موفقیت ارسال شد (تحویل تلگرام)."
+        if customer_msg_id is not None:
+            txt += f"\n🆔 msg_id: `{customer_msg_id}`"
+    else:
+        txt = f"❌ *{action}*: ارسال پیام به مشتری ناموفق بود."
+        if err:
+            # کوتاه و قابل فهم
+            txt += f"\nℹ️ خطا: `{str(err)[:120]}`"
 
-    # 1) تلاش برای حذف پیام وضعیت قبلی (اگر نشد، باز هم ادامه بده)
+    kwargs = {
+        "chat_id": admin_chat_id,
+        "text": txt,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True,
+    }
+    if base_message_id:
+        kwargs["reply_to_message_id"] = int(base_message_id)
+
     try:
-        last_id = context.bot_data.get(key)
-        if last_id:
-            try:
-                await context.bot.delete_message(chat_id=admin_chat_id, message_id=int(last_id))
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # 2) ارسال پیام وضعیت جدید (حتی اگر حذف قبلی شکست خورده باشد)
-    try:
-        kwargs = {"chat_id": admin_chat_id, "text": text}
-        if base_message_id:
-            kwargs["reply_to_message_id"] = int(base_message_id)
         sent = await context.bot.send_message(**kwargs)
-        context.bot_data[key] = sent.message_id
+        context.bot_data[last_key] = sent.message_id
     except Exception:
-        # اگر ارسال پیام وضعیت خطا خورد، کل بات نباید کرش کند
-        pass
-
-        kwargs = {"chat_id": admin_chat_id, "text": text}
-        if base_message_id:
-            kwargs["reply_to_message_id"] = int(base_message_id)
-        sent = await context.bot.send_message(**kwargs)
-        context.bot_data[key] = sent.message_id
-    except Exception:
-        # اگر ارسال/حذف پیام وضعیت خطا خورد، کل بات نباید کرش کند
         pass
 
 
@@ -2622,30 +2623,24 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             reply_markup=main_menu_reply(),
         )
         if not ok:
-            # ❌ ارسال به تلگرام ناموفق (مثلاً کاربر ربات را بلاک کرده)
-            try:
-                prompt_id = (pending_track or {}).get("prompt_msg_id")
-                if prompt_id:
-                    try:
-                        await context.bot.delete_message(chat_id=chat_id, message_id=int(prompt_id))
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            # حذف پیام تایپ‌شده ادمین (کد رهگیری) برای خلوت ماندن چت
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
-            except Exception:
-                pass
-
+            # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+            base_id = context.bot_data.get(_admin_ui_key(chat_id))
             await admin_ack_status(
                 context,
                 admin_chat_id=int(chat_id),
-                base_message_id=context.bot_data.get(_admin_ui_key(chat_id)),
-                text="❌ ارسال کد رهگیری به مشتری ناموفق بود (خطای تلگرام/مسدود بودن ربات).",
+                base_message_id=int(base_id) if base_id else None,
+                ok=False,
+                action="تحویل پست شد",
+                customer_msg_id=None,
+                err=err,
             )
-
+            try:
+                track_map.pop(chat_id, None)
+                if not track_map:
+                    context.bot_data.pop("admin_pending_tracking", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_tracking", None)
+            return
             try:
                 track_map.pop(chat_id, None)
                 if not track_map:
@@ -2681,13 +2676,18 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
 
-
+        # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+        base_id = context.bot_data.get(_admin_ui_key(chat_id))
         await admin_ack_status(
             context,
             admin_chat_id=int(chat_id),
-            base_message_id=context.bot_data.get(_admin_ui_key(chat_id)),
-            text="✅ پیام کد رهگیری با موفقیت برای مشتری ارسال شد.",
+            base_message_id=int(base_id) if base_id else None,
+            ok=True,
+            action="تحویل پست شد",
+            customer_msg_id=mid,
+            err=None,
         )
+
         try:
             track_map.pop(chat_id, None)
             if not track_map:
@@ -2725,32 +2725,17 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             reply_markup=main_menu_reply(),
         )
         if not ok:
-            # ❌ ارسال به تلگرام ناموفق (مثلاً کاربر ربات را بلاک کرده)
-            try:
-                prompt_id = (pending_msg or {}).get("prompt_msg_id")
-                if prompt_id:
-                    try:
-                        await context.bot.delete_message(chat_id=chat_id, message_id=int(prompt_id))
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            # (اختیاری) حذف پیام تایپ‌شده‌ی ادمین برای خلوت ماندن چت
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
-            except Exception:
-                pass
-
-            # پیام وضعیت زیر پنل ادمین
+            # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+            base_id = context.bot_data.get(_admin_ui_key(chat_id))
             await admin_ack_status(
                 context,
                 admin_chat_id=int(chat_id),
-                base_message_id=context.bot_data.get(_admin_ui_key(chat_id)),
-                text="❌ ارسال پیام به مشتری ناموفق بود (خطای تلگرام/مسدود بودن ربات).",
+                base_message_id=int(base_id) if base_id else None,
+                ok=False,
+                action="پیام به مشتری",
+                customer_msg_id=None,
+                err=err,
             )
-
-            # پاکسازی حالت انتظار
             try:
                 msg_map.pop(chat_id, None)
                 if not msg_map:
@@ -2785,12 +2770,16 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
 
-        # پیام وضعیت زیر پنل ادمین
+        # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+        base_id = context.bot_data.get(_admin_ui_key(chat_id))
         await admin_ack_status(
             context,
             admin_chat_id=int(chat_id),
-            base_message_id=context.bot_data.get(_admin_ui_key(chat_id)),
-            text=f"✅ پیام با موفقیت برای مشتری ارسال شد (تحویل تلگرام).\n🆔 msg_id: {mid}",
+            base_message_id=int(base_id) if base_id else None,
+            ok=True,
+            action="پیام به مشتری",
+            customer_msg_id=mid,
+            err=None,
         )
 
         try:
@@ -3304,8 +3293,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             _order_log(order_id, "system", f"ارسال پیام بسته‌بندی به مشتری ناموفق بود. err={err}")
             user_send_note = "🔴 ارسال پیام به مشتری ناموفق بود (خطای تلگرام/مسدود بودن ربات)."
 
-        back_to = (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue")
-
         # ✅ آپدیت پنل واحد ادمین (بدون شلوغ‌کاری)
         order = STORE.find_order(order_id) or order
         await admin_ui_send_or_edit(
@@ -3316,12 +3303,16 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
 
-        # 🔔 وضعیت ارسال پیام به مشتری را زیر پیام پنل ادمین نشان بده
+        # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+        base_id = context.bot_data.get(_admin_ui_key(update.effective_chat.id))
         await admin_ack_status(
             context,
             admin_chat_id=int(update.effective_chat.id),
-            base_message_id=(q.message.message_id if q.message else None),
-            text=("✅ پیام با موفقیت برای مشتری ارسال شد." if ok else "❌ ارسال پیام به مشتری ناموفق بود."),
+            base_message_id=int(base_id) if base_id else None,
+            ok=ok,
+            action="بسته‌بندی شد",
+            customer_msg_id=mid if ok else None,
+            err=err if not ok else None,
         )
 
         await q.answer("ثبت شد ✅")
