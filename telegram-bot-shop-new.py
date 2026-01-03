@@ -759,12 +759,19 @@ async def admin_open_order(update: Update, context: ContextTypes.DEFAULT_TYPE, o
             await update.message.reply_text("❌ سفارش پیدا نشد.")
         return
 
+    # remember which list to return to (per admin chat)
+    try:
+        _bt = context.bot_data.setdefault("admin_last_back_to", {})
+        _bt[int(update.effective_chat.id)] = back_to
+    except Exception:
+        pass
+
     await admin_ui_send_or_edit(
         update,
         context,
         text=_admin_order_summary(order),
         parse_mode="Markdown",
-        reply_markup=admin_order_keyboard(order_id, back_to=back_to),
+        reply_markup=admin_order_keyboard(order_id, back_to=(context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue")),
     )
 
 # ------------------ Shipping methods ------------------
@@ -2509,6 +2516,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     track_map = context.bot_data.get("admin_pending_tracking") or {}
     pending_track = track_map.get(chat_id) if isinstance(track_map, dict) else None
     if pending_track:
+        back_to = (pending_track or {}).get("back_to") or (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(chat_id), "admin:queue")
         order_id = pending_track.get("order_id")
         order = STORE.find_order(order_id) if order_id else None
 
@@ -2594,6 +2602,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     msg_map = context.bot_data.get("admin_pending_msg") or {}
     pending_msg = msg_map.get(chat_id) if isinstance(msg_map, dict) else None
     if pending_msg:
+        back_to = (pending_msg or {}).get("back_to") or (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(chat_id), "admin:queue")
         order_id = pending_msg.get("order_id")
         order = STORE.find_order(order_id) if order_id else None
 
@@ -2919,7 +2928,6 @@ async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 #      روتر کلی دکمه ها 
 async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None :
     q = update.callback_query
-    await q.answer() # پاسخ به کلیک اولیه برای حذف لودینگ
     data = (q.data or "").strip()
 
     # 🔒 دسترسی به callback های ادمین
@@ -3182,7 +3190,11 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             chat_id=update.effective_chat.id,
             text="🔎 لطفاً کد رهگیری پست را تایپ کنید:"
         )
-        pending[update.effective_chat.id] = {"order_id": order_id, "prompt_msg_id": sent.message_id}
+        pending[update.effective_chat.id] = {
+            "order_id": order_id,
+            "prompt_msg_id": sent.message_id,
+            "back_to": (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue"),
+        }
         await q.answer("منتظر کد رهگیری…", show_alert=False)
         return
 
@@ -3194,7 +3206,11 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             chat_id=update.effective_chat.id,
             text="✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:"
         )
-        pending[update.effective_chat.id] = {"order_id": order_id, "prompt_msg_id": sent.message_id}
+        pending[update.effective_chat.id] = {
+            "order_id": order_id,
+            "prompt_msg_id": sent.message_id,
+            "back_to": (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue"),
+        }
 
         await q.answer("منتظر پیام…", show_alert=False)
         return
