@@ -510,6 +510,22 @@ async def admin_ui_send_or_edit(
     except Exception:
         pass
 
+    if update.message and not update.callback_query:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+        sent = await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=disable_web_page_preview,
+        )
+        context.bot_data[key] = sent.message_id
+        return
+
     if msg_id:
         try:
             await context.bot.edit_message_text(
@@ -577,6 +593,8 @@ def admin_order_keyboard(order_id: str) -> InlineKeyboardMarkup:
 
 
 async def admin_queue_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.callback_query:
+        await update.callback_query.answer()
     if not _is_admin_activated(update):
         if update.message:
             await update.message.reply_text("⛔️ دسترسی ندارید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
@@ -636,6 +654,8 @@ def _admin_order_summary(order: dict) -> str:
 
 
 async def admin_open_order(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    if update.callback_query:
+        await update.callback_query.answer()
     if not _is_admin_activated(update):
         if update.callback_query:
             await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
