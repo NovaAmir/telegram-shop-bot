@@ -763,32 +763,57 @@ async def admin_shipped_show(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
+
+def _md_escape(val) -> str:
+    """Escape user-provided text for Telegram parse_mode='Markdown'."""
+    if val is None:
+        return "—"
+    s = str(val)
+    # escape backslash first
+    s = s.replace("\\", "\\\\")
+    for ch in ("*", "_", "`", "[", "]"):
+        s = s.replace(ch, f"\\{ch}")
+    return s
+
 def _admin_order_summary(order: dict) -> str:
-    oid = order.get("order_id")
+    oid_raw = order.get("order_id")
+    oid = _md_escape(oid_raw)
     cust = order.get("customer") or {}
+
+    name = _md_escape(cust.get("name") or "—")
+    phone = _md_escape(cust.get("phone") or "—")
+    address = _md_escape(cust.get("address") or "—")
+    postal = _md_escape(cust.get("postal") or "—")
+
     ship_method = (cust.get("shipping_method") or "").strip()
     ship_method_label = SHIPPING_METHODS.get(ship_method, {}).get("label") if ship_method else None
-    pay_label = PAY_STATUS_FA.get(order.get("status") or "", order.get("status") or "—")
-    ship_label = SHIP_STATUS_FA.get(order.get("shipping_status") or "pending", "—")
-    track = order.get("tracking_code") or "ثبت نشده"
+    ship_method_txt = _md_escape(ship_method_label or ship_method or "—")
+
+    pay_label = _md_escape(PAY_STATUS_FA.get(order.get("status") or "", order.get("status") or "—"))
+    ship_label = _md_escape(SHIP_STATUS_FA.get(order.get("shipping_status") or "pending", "—"))
+    track = _md_escape(order.get("tracking_code") or "ثبت نشده")
+
     items = order.get("items") or []
-    lines = [f"🧾 *سفارش* `{oid}`",
-             f"👤 نام: {cust.get('name') or '—'}",
-             f"📞 موبایل: {cust.get('phone') or '—'}",
-             f"📍 آدرس: {cust.get('address') or '—'}",
-             f"🏷 کدپستی: {cust.get('postal') or '—'}",
-             f"🚚 روش ارسال: {ship_method_label or ship_method or '—'}",
-             f"💳 پرداخت: {pay_label}",
-             f"📦 وضعیت ارسال: {ship_label}",
-             f"🔎 کد رهگیری: {track}",
-             "",
-             f"💰 مبلغ کل: *{_ftm_toman(order.get('total', 0))}*",
-             "",
-             "🛒 اقلام:"]
+
+    lines = [
+        f"🧾 *سفارش* `{oid}`",
+        f"👤 نام: {name}",
+        f"📞 موبایل: {phone}",
+        f"📍 آدرس: {address}",
+        f"🏷 کدپستی: {postal}",
+        f"🚚 روش ارسال: {ship_method_txt}",
+        f"💳 پرداخت: {pay_label}",
+        f"📦 وضعیت ارسال: {ship_label}",
+        f"🔎 کد رهگیری: {track}",
+        "",
+        f"💰 مبلغ کل: *{_ftm_toman(order.get('total', 0))}*",
+        "",
+        "🛒 اقلام:",
+    ]
     for it in items:
-        pname = it.get("name") or it.get("product") or "—"
-        size = it.get("size") or "—"
-        qty = it.get("qty") or 1
+        pname = _md_escape(it.get("name") or it.get("product") or "—")
+        size = _md_escape(it.get("size") or "—")
+        qty = _md_escape(it.get("qty") or 1)
         price = _ftm_toman(it.get("price", 0))
         lines.append(f"• {pname} | سایز: `{size}` | تعداد: `{qty}` | قیمت: {price}")
     return "\n".join(lines)
