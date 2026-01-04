@@ -1,5 +1,7 @@
 from telegram import (Update , InlineKeyboardButton , InlineKeyboardMarkup , ReplyKeyboardMarkup , ReplyKeyboardRemove, InputMediaPhoto)
 from telegram.ext import (ApplicationBuilder , CommandHandler , ContextTypes , CallbackQueryHandler , Application , MessageHandler , filters , ConversationHandler)
+from telegram import MessageEntity
+from telegram.constants import MessageEntityType
 import logging
 import os
 import json
@@ -862,7 +864,7 @@ async def admin_queue_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await admin_ui_send_or_edit(
         update,
         context,
-        text=f"📋 *سفارش‌های آماده ارسال*\nتعداد: `{len(orders)}`\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
+        text=f"📋 *سفارش‌های آماده ارسال*\nتعداد: {len(orders)}\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
         reply_markup=admin_queue_keyboard(orders),
     )
 
@@ -884,7 +886,7 @@ async def admin_shipped_show(update: Update, context: ContextTypes.DEFAULT_TYPE)
         update,
         context,
         text=f"""🚚 *سفارش‌های ارسال شده*
-کل سفارش‌های ارسال‌شده: `{len(shipped_all)}`
+کل سفارش‌های ارسال‌شده: {len(shipped_all)}
 
 یک تاریخ را انتخاب کنید تا سفارش‌های ارسال‌شده در همان روز نمایش داده شود.""",
         reply_markup=admin_shipped_date_picker_keyboard(),
@@ -908,7 +910,7 @@ async def admin_shipped_show_date(update: Update, context: ContextTypes.DEFAULT_
             orders = [o for o in _admin_shipped_orders() if not o.get("fulfilled_at")]
         except Exception:
             orders = []
-        header = "📅 تاریخ: `بدون تاریخ`"
+        header = "📅 تاریخ: بدون تاریخ"
 
         if not orders:
             await admin_ui_send_or_edit(
@@ -934,7 +936,7 @@ async def admin_shipped_show_date(update: Update, context: ContextTypes.DEFAULT_
         await admin_ui_send_or_edit(
             update,
             context,
-            text=f"🚚 *سفارش‌های ارسال شده*\n{header}\nتعداد: `{len(orders)}`\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
+            text=f"🚚 *سفارش‌های ارسال شده*\n{header}\nتعداد: {len(orders)}\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
             reply_markup=admin_shipped_list_keyboard(orders, "unknown"),
             parse_mode="Markdown",
         )
@@ -965,7 +967,7 @@ async def admin_shipped_show_date(update: Update, context: ContextTypes.DEFAULT_
     # labels for header
     jalali = _jalali_label_from_greg_date(target_date)
     greg = target_date.strftime("%Y-%m-%d")
-    header = f"📅 تاریخ: `{jalali} ({greg})`"
+    header = f"📅 تاریخ: {jalali} ({greg})"
 
     if not orders:
         await admin_ui_send_or_edit(
@@ -987,7 +989,7 @@ async def admin_shipped_show_date(update: Update, context: ContextTypes.DEFAULT_
         context,
         text=f"""🚚 *سفارش‌های ارسال شده*
 {header}
-تعداد: `{len(orders)}`
+تعداد: {len(orders)}
 
 روی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.""",
         reply_markup=admin_shipped_list_keyboard(orders, date_iso),
@@ -1003,7 +1005,7 @@ def _admin_order_summary(order: dict) -> str:
     ship_label = SHIP_STATUS_FA.get(order.get("shipping_status") or "pending", "—")
     track = order.get("tracking_code") or "ثبت نشده"
     items = order.get("items") or []
-    lines = [f"🧾 *سفارش* `{oid}`",
+    lines = [f"🧾 *سفارش* {oid}",
              f"👤 نام: {cust.get('name') or '—'}",
              f"📞 موبایل: {cust.get('phone') or '—'}",
              f"📍 آدرس: {cust.get('address') or '—'}",
@@ -1021,7 +1023,7 @@ def _admin_order_summary(order: dict) -> str:
         size = it.get("size") or "—"
         qty = it.get("qty") or 1
         price = _ftm_toman(it.get("price", 0))
-        lines.append(f"• {pname} | سایز: `{size}` | تعداد: `{qty}` | قیمت: {price}")
+        lines.append(f"• {pname} | سایز: {size} | تعداد: {qty} | قیمت: {price}")
     return "\n".join(lines)
 
 
@@ -1154,6 +1156,25 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
 
 def format_card_number(card_number: str) -> str:
     return " ".join(card_number[i:i+4] for i in range(0, len(card_number), 4))
+
+def _build_cards_text_and_entities(cards: List[Dict]) -> Tuple[str, List[MessageEntity], List[str]]:
+    """Build card list text block + CODE entities (no backticks) and raw numbers."""
+    block = ""
+    entities: List[MessageEntity] = []
+    raw_numbers: List[str] = []
+    offset = 0
+    for i, card in enumerate(cards, start=1):
+        raw = str(card.get("number", "")).strip()
+        raw_numbers.append(raw)
+        formatted = format_card_number(raw)
+        prefix = f"{i}) 💳 "
+        line1 = prefix + formatted + "\n"
+        entities.append(MessageEntity(type=MessageEntityType.CODE, offset=offset + len(prefix), length=len(formatted)))
+        line2 = f"👤 ({card.get('holder', '')})\n\n"
+        block += line1 + line2
+        offset += len(line1) + len(line2)
+    return block, entities, raw_numbers
+
 
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
@@ -1664,33 +1685,33 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     lines = []
     lines.append("📊 *داشبورد فروش*")
-    lines.append(f"📅 تاریخ: `{date_label}`")
+    lines.append(f"📅 تاریخ: {date_label}")
     lines.append("")
     lines.append("🗓 *امروز*")
-    lines.append(f"• تعداد سفارش پرداخت‌شده: `{today['count']}`")
+    lines.append(f"• تعداد سفارش پرداخت‌شده: {today['count']}")
     lines.append(f"• مبلغ فروش: *{_ftm_toman(today['amount'])}*")
-    lines.append(f"• میانگین فروش : `{_ftm_toman(today['avg'])}`")
-    lines.append(f"• تغییر نسبت به دیروز : `{_format_pct(_pct_change(today['amount'], yesterday['amount']))}`")
+    lines.append(f"• میانگین فروش : {_ftm_toman(today['avg'])}")
+    lines.append(f"• تغییر نسبت به دیروز : {_format_pct(_pct_change(today['amount'], yesterday['amount']))}")
     lines.append("")
     lines.append("📅 *۷ روز اخیر*")
-    lines.append(f"• تعداد سفارش پرداخت شده: `{week['count']}`")
+    lines.append(f"• تعداد سفارش پرداخت شده: {week['count']}")
     lines.append(f"• فروش: *{_ftm_toman(week['amount'])}*")
-    lines.append(f"• میانگین فروش : `{_ftm_toman(week['avg'])}`")
-    lines.append(f"• تغییر نسبت به ۷ روز قبل : `{_format_pct(_pct_change(week['amount'], prev_week['amount']))}`")
+    lines.append(f"• میانگین فروش : {_ftm_toman(week['avg'])}")
+    lines.append(f"• تغییر نسبت به ۷ روز قبل : {_format_pct(_pct_change(week['amount'], prev_week['amount']))}")
     lines.append("• پرفروش‌ها:")
     lines.append(_top_items_text(week["items"]))
     lines.append("")
     lines.append("📆 *۳۰ روز اخیر*")
-    lines.append(f"• تعداد سفارش پرداخت شده: `{month['count']}`")
+    lines.append(f"• تعداد سفارش پرداخت شده: {month['count']}")
     lines.append(f"• فروش: *{_ftm_toman(month['amount'])}*")
-    lines.append(f"• میانگین فروش : `{_ftm_toman(month['avg'])}`")
-    lines.append(f"• تغییر نسبت به ۳۰ روز قبل : `{_format_pct(_pct_change(month['amount'], prev_month['amount']))}`")
+    lines.append(f"• میانگین فروش : {_ftm_toman(month['avg'])}")
+    lines.append(f"• تغییر نسبت به ۳۰ روز قبل : {_format_pct(_pct_change(month['amount'], prev_month['amount']))}")
     lines.append("• پرفروش‌ها:")
     lines.append(_top_items_text(month["items"]))
     lines.append("")
     lines.append("📦 *وضعیت سفارش‌ها*")
     for key, label in ORDER_STATUS_FA.items():
-        lines.append(f"• {label}: `{status_counts.get(key, 0)}`")
+        lines.append(f"• {label}: {status_counts.get(key, 0)}")
 
 
     msg = "\n".join(lines)
@@ -2389,11 +2410,11 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     # 🟢 نمایش خلاصه سفارش و اطلاعات مشتری با فرمت Markdown
     info = (
         "🧾 **خلاصه سفارش و مشخصات مشتری*:\n\n"
-        "👤 **نام و نام خانوادگی*: `{name}`\n"
-        "📞 **شماره موبایل*: `{phone}`\n"
-        "🏠 **آدرس*: `{address}`\n"
-        "📮 **کد پستی*: `{postal}`\n"
-        "🚚 **روش ارسال*: `{ship}`\n\n"
+        "👤 **نام و نام خانوادگی*: {name}\n"
+        "📞 **شماره موبایل*: {phone}\n"
+        "🏠 **آدرس*: {address}\n"
+        "📮 **کد پستی*: {postal}\n"
+        "🚚 **روش ارسال*: {ship}\n\n"
         "🛍️ **محصولات سفارش داده شده*:\n"
         f"{joined_lines}\n\n"
         f"💰 **مبلغ قابل پرداخت*: **{_ftm_toman(total)}**"
@@ -2440,11 +2461,11 @@ def _build_checkout_summary_text(context: ContextTypes.DEFAULT_TYPE) -> str:
 
     info = (
         "🧾 **خلاصه سفارش و مشخصات مشتری*:\n\n"
-        "👤 **نام و نام خانوادگی*: `{name}`\n"
-        "📞 **شماره موبایل*: `{phone}`\n"
-        "🏠 **آدرس*: `{address}`\n"
-        "📮 **کد پستی*: `{postal}`\n"
-        "🚚 **روش ارسال*: `{ship}`\n\n"
+        "👤 **نام و نام خانوادگی*: {name}\n"
+        "📞 **شماره موبایل*: {phone}\n"
+        "🏠 **آدرس*: {address}\n"
+        "📮 **کد پستی*: {postal}\n"
+        "🚚 **روش ارسال*: {ship}\n\n"
         "🛍️ **محصولات سفارش داده شده*:\n"
         "{items}\n\n"
         "💰 **مبلغ قابل پرداخت*: **{total}**"
@@ -2558,11 +2579,8 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     order = STORE.find_order(order_id)
     if order:
         total = order.get("total", 0)
-    
-    cards_text = ""
-    for i, card in enumerate(CARDS, start=1):
-        cards_text += (f"{i}) 💳 `{format_card_number(card['number'])}`\n"f"👤 ({card['holder']})\n\n")
-    
+    cards_text, cards_entities, raw_card_numbers = _build_cards_text_and_entities(CARDS)
+
     shipping_method = (order.get("shipping_method") or order.get("customer", {}).get("shipping_method"))
     shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
 
@@ -2577,22 +2595,33 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
 )
 
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
-        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
-    ])
-
+    kb_rows = []
+    for idx, raw in enumerate(raw_card_numbers, start=1):
+        kb_rows.append([InlineKeyboardButton(f"📋 ارسال شماره کارت {idx} برای کپی", callback_data=f"copycard:{idx}:{order_id}")])
+    kb_rows.append([InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")])
+    kb_rows.append([InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")])
+    kb = InlineKeyboardMarkup(kb_rows)
     if update.callback_query:
         q = update.callback_query
         await q.answer()
         try:
-            await q.edit_message_text(text, reply_markup=kb)
+            shift = text.find(cards_text)
+            if shift < 0:
+                shift = 0
+            entities = [MessageEntity(type=e.type, offset=e.offset + shift, length=e.length) for e in cards_entities]
+            await q.edit_message_text(text, reply_markup=kb, entities=entities)
         except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb)
+            shift = text.find(cards_text)
+            if shift < 0:
+                shift = 0
+            entities = [MessageEntity(type=e.type, offset=e.offset + shift, length=e.length) for e in cards_entities]
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, entities=entities)
     else:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb)
-
-
+        shift = text.find(cards_text)
+        if shift < 0:
+            shift = 0
+        entities = [MessageEntity(type=e.type, offset=e.offset + shift, length=e.length) for e in cards_entities]
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, entities=entities)
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     q = update.callback_query
     await q.answer()
@@ -2696,8 +2725,8 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     admin_text = (
         "🧾 **رسید پرداخت جدید**\n"
-        f"OrderID: `{order_id}`\n"
-        f"UserChatID: `{order.get('user_chat_id')}`\n"
+        f"OrderID: {order_id}\n"
+        f"UserChatID: {order.get('user_chat_id')}\n"
         f"User: @{order.get('username') or '—'}\n"
         f"جمع کل: **{_ftm_toman(order.get('total', 0))}**\n\n"
         "👤 مشتری:\n"
@@ -2753,7 +2782,7 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
     admin_panel = admin_panel_keyboard(order_id)
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=f"🛠 کنترل سفارش `{order_id}`",
+        text=f"🛠 کنترل سفارش {order_id}",
         reply_markup=admin_panel
     )
 
@@ -2763,7 +2792,7 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
     try:
         await context.bot.send_message(
             chat_id=int(user_chat_id),
-            text=f"✅ پرداخت شما برای سفارش `{order_id}` تایید شد. سفارش شما در حال پردازش است.",
+            text=f"✅ پرداخت شما برای سفارش {order_id} تایید شد. سفارش شما در حال پردازش است.",
             reply_markup=main_menu_reply()
         )
     except Exception as e:
@@ -2911,7 +2940,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await admin_ui_send_or_edit(
             update,
             context,
-            text="✅ تحویل پست شد و کد رهگیری برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال شد\n🆔 msg_id: `" + str(mid) + "`\n\n" + _admin_order_summary(order),
+            text="✅ تحویل پست شد و کد رهگیری برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال شد\n🆔 msg_id: " + str(mid) + "\n\n" + _admin_order_summary(order),
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
 
@@ -2946,7 +2975,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 update,
                 context,
                 text="""❌ *فرمت تاریخ درست نیست.*
-مثال: `1404/10/14` یا `2026-01-04`""",
+مثال: 1404/10/14 یا 2026-01-04""",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("⬅️ بازگشت", callback_data="admin:shipped")],
                 ]),
@@ -3034,7 +3063,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await admin_ui_send_or_edit(
             update,
             context,
-            text="✅ پیام برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال\n🆔 msg_id: `" + str(mid) + "`\n\n" + _admin_order_summary(order),
+            text="✅ پیام برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال\n🆔 msg_id: " + str(mid) + "\n\n" + _admin_order_summary(order),
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
 
@@ -3089,7 +3118,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await context.bot.send_message(
             chat_id=int(user_chat_id),
             text=(
-                f"❌ رسید پرداخت برای سفارش `{order_id}` تایید نشد.\n\n"
+                f"❌ رسید پرداخت برای سفارش {order_id} تایید نشد.\n\n"
                 f"پیام ادمین: {msg}\n\n"
                 "لطفاً روی «ارسال مجدد رسید» بزن و دوباره عکس رسید را ارسال کن."
             ),
@@ -3318,6 +3347,30 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     q = update.callback_query
     data = (q.data or "").strip()
 
+
+    # --- one-click helper: send raw card number for easy copy ---
+    if data.startswith("copycard:"):
+        # format: copycard:{idx}:{order_id}
+        try:
+            _p = data.split(":")
+            idx = int(_p[1])
+            card = CARDS[idx-1] if 1 <= idx <= len(CARDS) else None
+        except Exception:
+            card = None
+        if not card:
+            await q.answer("شماره کارت پیدا نشد.", show_alert=True)
+            return
+        raw = str(card.get("number", "")).strip()
+        entities = [MessageEntity(type=MessageEntityType.CODE, offset=0, length=len(raw))]
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=raw,
+            entities=entities,
+            reply_to_message_id=q.message.message_id if q.message else None,
+        )
+        await q.answer("ارسال شد. روی شماره، Copy بزنید.")
+        return
+
     # 🔒 دسترسی به callback های ادمین
     if (data.startswith("admin:") or data.startswith("ship:")) and not _is_admin_activated(update):
         await q.answer("⛔️ دسترسی ندارید.", show_alert=True)
@@ -3359,8 +3412,8 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             context,
             text="""📅 *تاریخ را وارد کنید*
 فرمت‌های قابل قبول:
-• `1404/10/14` (شمسی)
-• `2026-01-04` (میلادی)
+• 1404/10/14 (شمسی)
+• 2026-01-04 (میلادی)
 
 بعد از ارسال، همانجا لیست سفارش‌های ارسال‌شده‌ی آن تاریخ نمایش داده می‌شود.""",
             reply_markup=InlineKeyboardMarkup([
@@ -3595,12 +3648,12 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         ok, mid, err = await _safe_send_message(
             context,
             chat_id=int(order["user_chat_id"]),
-            text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
+            text=f"📦 سفارش {order_id} بسته‌بندی شد و به‌زودی ارسال می‌شود.",
             reply_markup=main_menu_reply(),
         )
         if ok:
             _order_log(order_id, "system", f"پیام بسته‌بندی به مشتری ارسال شد. msg_id={mid}")
-            user_send_note = f"🟢 پیام به مشتری ارسال شد (تحویل تلگرام)\n🆔 msg_id: `{mid}`"
+            user_send_note = f"🟢 پیام به مشتری ارسال شد (تحویل تلگرام)\n🆔 msg_id: {mid}"
         else:
             _order_log(order_id, "system", f"ارسال پیام بسته‌بندی به مشتری ناموفق بود. err={err}")
             user_send_note = "🔴 ارسال پیام به مشتری ناموفق بود (خطای تلگرام/مسدود بودن ربات)."
