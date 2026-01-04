@@ -668,19 +668,18 @@ async def admin_ack_status(
             pass
 
     if ok:
-        txt = f"✅ *{action}*: پیام به مشتری با موفقیت ارسال شد (تحویل تلگرام)."
+        txt = f"✅ {action}: پیام به مشتری با موفقیت ارسال شد (تحویل تلگرام)."
         if customer_msg_id is not None:
-            txt += f"\n🆔 msg_id: `{customer_msg_id}`"
+            txt += f"\n🆔 msg_id: {customer_msg_id}"
     else:
-        txt = f"❌ *{action}*: ارسال پیام به مشتری ناموفق بود."
+        txt = f"❌ {action}: ارسال پیام به مشتری ناموفق بود."
         if err:
             # کوتاه و قابل فهم
-            txt += f"\nℹ️ خطا: `{str(err)[:120]}`"
+            txt += f"\nℹ️ خطا: {str(err)[:120]}"
 
     kwargs = {
         "chat_id": admin_chat_id,
         "text": txt,
-        "parse_mode": "Markdown",
         "disable_web_page_preview": True,
     }
     if base_message_id:
@@ -709,7 +708,6 @@ async def admin_queue_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             update,
             context,
             text="📋 *سفارشِ آماده‌ای برای ارسال ندارید.*\n\n(درگاه پرداخت یا تاییدشده توسط ادمین)",
-            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 بروزرسانی لیست", callback_data="admin:queue")],
                 [InlineKeyboardButton("🚚 سفارش‌های ارسال شده", callback_data="admin:shipped")],
@@ -722,7 +720,6 @@ async def admin_queue_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         update,
         context,
         text=f"📋 *سفارش‌های آماده ارسال*\nتعداد: `{len(orders)}`\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
-        parse_mode="Markdown",
         reply_markup=admin_queue_keyboard(orders),
     )
 
@@ -745,7 +742,6 @@ async def admin_shipped_show(update: Update, context: ContextTypes.DEFAULT_TYPE)
             update,
             context,
             text="🚚 *سفارشی در وضعیت «ارسال شده» ندارید.*\n\n(یعنی کد رهگیری ثبت شده باشد و هنوز delivered نشده باشد.)",
-            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 بروزرسانی لیست", callback_data="admin:shipped")],
                 [InlineKeyboardButton("📋 آماده ارسال", callback_data="admin:queue")],
@@ -758,62 +754,36 @@ async def admin_shipped_show(update: Update, context: ContextTypes.DEFAULT_TYPE)
         update,
         context,
         text=f"🚚 *سفارش‌های ارسال شده*\nتعداد: `{len(orders)}`\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
-        parse_mode="Markdown",
         reply_markup=admin_shipped_keyboard(orders),
     )
 
 
-
-def _md_escape(val) -> str:
-    """Escape user-provided text for Telegram parse_mode='Markdown'."""
-    if val is None:
-        return "—"
-    s = str(val)
-    # escape backslash first
-    s = s.replace("\\", "\\\\")
-    for ch in ("*", "_", "`", "[", "]"):
-        s = s.replace(ch, f"\\{ch}")
-    return s
-
 def _admin_order_summary(order: dict) -> str:
-    oid_raw = order.get("order_id")
-    oid = _md_escape(oid_raw)
+    oid = order.get("order_id")
     cust = order.get("customer") or {}
-
-    name = _md_escape(cust.get("name") or "—")
-    phone = _md_escape(cust.get("phone") or "—")
-    address = _md_escape(cust.get("address") or "—")
-    postal = _md_escape(cust.get("postal") or "—")
-
     ship_method = (cust.get("shipping_method") or "").strip()
     ship_method_label = SHIPPING_METHODS.get(ship_method, {}).get("label") if ship_method else None
-    ship_method_txt = _md_escape(ship_method_label or ship_method or "—")
-
-    pay_label = _md_escape(PAY_STATUS_FA.get(order.get("status") or "", order.get("status") or "—"))
-    ship_label = _md_escape(SHIP_STATUS_FA.get(order.get("shipping_status") or "pending", "—"))
-    track = _md_escape(order.get("tracking_code") or "ثبت نشده")
-
+    pay_label = PAY_STATUS_FA.get(order.get("status") or "", order.get("status") or "—")
+    ship_label = SHIP_STATUS_FA.get(order.get("shipping_status") or "pending", "—")
+    track = order.get("tracking_code") or "ثبت نشده"
     items = order.get("items") or []
-
-    lines = [
-        f"🧾 *سفارش* `{oid}`",
-        f"👤 نام: {name}",
-        f"📞 موبایل: {phone}",
-        f"📍 آدرس: {address}",
-        f"🏷 کدپستی: {postal}",
-        f"🚚 روش ارسال: {ship_method_txt}",
-        f"💳 پرداخت: {pay_label}",
-        f"📦 وضعیت ارسال: {ship_label}",
-        f"🔎 کد رهگیری: {track}",
-        "",
-        f"💰 مبلغ کل: *{_ftm_toman(order.get('total', 0))}*",
-        "",
-        "🛒 اقلام:",
-    ]
+    lines = [f"🧾 *سفارش* `{oid}`",
+             f"👤 نام: {cust.get('name') or '—'}",
+             f"📞 موبایل: {cust.get('phone') or '—'}",
+             f"📍 آدرس: {cust.get('address') or '—'}",
+             f"🏷 کدپستی: {cust.get('postal') or '—'}",
+             f"🚚 روش ارسال: {ship_method_label or ship_method or '—'}",
+             f"💳 پرداخت: {pay_label}",
+             f"📦 وضعیت ارسال: {ship_label}",
+             f"🔎 کد رهگیری: {track}",
+             "",
+             f"💰 مبلغ کل: *{_ftm_toman(order.get('total', 0))}*",
+             "",
+             "🛒 اقلام:"]
     for it in items:
-        pname = _md_escape(it.get("name") or it.get("product") or "—")
-        size = _md_escape(it.get("size") or "—")
-        qty = _md_escape(it.get("qty") or 1)
+        pname = it.get("name") or it.get("product") or "—"
+        size = it.get("size") or "—"
+        qty = it.get("qty") or 1
         price = _ftm_toman(it.get("price", 0))
         lines.append(f"• {pname} | سایز: `{size}` | تعداد: `{qty}` | قیمت: {price}")
     return "\n".join(lines)
@@ -846,7 +816,6 @@ async def admin_open_order(update: Update, context: ContextTypes.DEFAULT_TYPE, o
         update,
         context,
         text=_admin_order_summary(order),
-        parse_mode="Markdown",
         reply_markup=admin_order_keyboard(order_id, back_to=(context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue")),
     )
 
@@ -1482,14 +1451,14 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     ])
 
     if update.message:
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
+        await update.message.reply_text(msg, reply_markup=kb)
     elif update.callback_query:
         q = update.callback_query
         await q.answer()
         try:
-            await q.edit_message_text(msg, parse_mode="Markdown", reply_markup=kb)
+            await q.edit_message_text(msg, reply_markup=kb)
         except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode="Markdown", reply_markup=kb)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, reply_markup=kb)
 
 
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1923,13 +1892,13 @@ async def show_cart(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None:
         await q.answer()
         # پیام قبلی (که دارای دکمه Inline بوده) ویرایش می‌شود
         if q.message.caption:
-            await q.edit_message_caption(caption=text , reply_markup=reply_markup , parse_mode="Markdown")
+            await q.edit_message_caption(caption=text , reply_markup=reply_markup )
         else:
-            await q.edit_message_text(text , reply_markup=reply_markup , parse_mode="Markdown")
+            await q.edit_message_text(text , reply_markup=reply_markup )
     else:
         # اگر از دکمه Reply Keyboard آمده (Message)
         # یک پیام جدید ارسال می‌شود
-        await update.message.reply_text(text , reply_markup=reply_markup , parse_mode="Markdown")
+        await update.message.reply_text(text , reply_markup=reply_markup )
     return
 
 
@@ -2169,15 +2138,15 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     joined_lines = "\n".join(lines)
     # 🟢 نمایش خلاصه سفارش و اطلاعات مشتری با فرمت Markdown
     info = (
-        "🧾 **خلاصه سفارش و مشخصات مشتری**:\n\n"
-        "👤 **نام و نام خانوادگی**: `{name}`\n"
-        "📞 **شماره موبایل**: `{phone}`\n"
-        "🏠 **آدرس**: `{address}`\n"
-        "📮 **کد پستی**: `{postal}`\n"
-        "🚚 **روش ارسال**: `{ship}`\n\n"
-        "🛍️ **محصولات سفارش داده شده**:\n"
+        "🧾 **خلاصه سفارش و مشخصات مشتری*:\n\n"
+        "👤 **نام و نام خانوادگی*: `{name}`\n"
+        "📞 **شماره موبایل*: `{phone}`\n"
+        "🏠 **آدرس*: `{address}`\n"
+        "📮 **کد پستی*: `{postal}`\n"
+        "🚚 **روش ارسال*: `{ship}`\n\n"
+        "🛍️ **محصولات سفارش داده شده*:\n"
         f"{joined_lines}\n\n"
-        f"💰 **مبلغ قابل پرداخت**: **{_ftm_toman(total)}**"
+        f"💰 **مبلغ قابل پرداخت*: **{_ftm_toman(total)}**"
     ).format(
         name=customer.get('name', '—'),
         phone=customer.get('phone', '—'),
@@ -2195,7 +2164,7 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
 ])
 
-    await send(chat_id=chat_id, text=info, reply_markup=kb, parse_mode="Markdown")
+    await send(chat_id=chat_id, text=info, reply_markup=kb)
     # ✅ بازگرداندن منوی اصلی (Reply Keyboard) بعد از اتمام فرم
     m = await context.bot.send_message(
         chat_id=chat_id,
@@ -2220,15 +2189,15 @@ def _build_checkout_summary_text(context: ContextTypes.DEFAULT_TYPE) -> str:
     ship_label = SHIPPING_METHODS.get(customer.get("shipping_method"), {}).get("label") if customer.get("shipping_method") else "انتخاب نشده"
 
     info = (
-        "🧾 **خلاصه سفارش و مشخصات مشتری**:\n\n"
-        "👤 **نام و نام خانوادگی**: `{name}`\n"
-        "📞 **شماره موبایل**: `{phone}`\n"
-        "🏠 **آدرس**: `{address}`\n"
-        "📮 **کد پستی**: `{postal}`\n"
-        "🚚 **روش ارسال**: `{ship}`\n\n"
-        "🛍️ **محصولات سفارش داده شده**:\n"
+        "🧾 **خلاصه سفارش و مشخصات مشتری*:\n\n"
+        "👤 **نام و نام خانوادگی*: `{name}`\n"
+        "📞 **شماره موبایل*: `{phone}`\n"
+        "🏠 **آدرس*: `{address}`\n"
+        "📮 **کد پستی*: `{postal}`\n"
+        "🚚 **روش ارسال*: `{ship}`\n\n"
+        "🛍️ **محصولات سفارش داده شده*:\n"
         "{items}\n\n"
-        "💰 **مبلغ قابل پرداخت**: **{total}**"
+        "💰 **مبلغ قابل پرداخت*: **{total}**"
     ).format(
         name=customer.get('name', '—'),
         phone=customer.get('phone', '—'),
@@ -2367,11 +2336,11 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         q = update.callback_query
         await q.answer()
         try:
-            await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+            await q.edit_message_text(text, reply_markup=kb)
         except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb)
     else:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb)
 
 
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
@@ -2409,9 +2378,9 @@ async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
         [InlineKeyboardButton("❌ انصراف", callback_data="receipt:cancel")],
     ])
     try:
-        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        await q.edit_message_text(text, reply_markup=kb)
     except Exception:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb)
 
 
 async def receipt_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2499,7 +2468,6 @@ async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             context,
             photo=file_id,
             caption=admin_text,
-            parse_mode="Markdown",
             reply_markup=admin_kb
         )
     except Exception as e:
@@ -2536,7 +2504,6 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f"🛠 کنترل سفارش `{order_id}`",
-        parse_mode="Markdown",
         reply_markup=admin_panel
     )
 
@@ -2547,13 +2514,12 @@ async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, orde
         await context.bot.send_message(
             chat_id=int(user_chat_id),
             text=f"✅ پرداخت شما برای سفارش `{order_id}` تایید شد. سفارش شما در حال پردازش است.",
-            parse_mode="Markdown",
             reply_markup=main_menu_reply()
         )
     except Exception as e:
         logger.error("Failed to notify user for approve: %s", e)
 
-    await q.edit_message_caption(caption=(q.message.caption or "") + "\n\n✅ *پرداخت تایید شد.*", parse_mode="Markdown", reply_markup=None)
+    await q.edit_message_caption(caption=(q.message.caption or "") + "\n\n✅ پرداخت تایید شد.", reply_markup=None)
 
 
 async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
@@ -2579,8 +2545,7 @@ async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE,
         "user_chat_id": order.get("user_chat_id"),
     }
     await q.edit_message_caption(
-        caption=(q.message.caption or "") + "\n\n❌ *لطفاً دلیل/پیام را تایپ کنید تا برای مشتری ارسال شود.*",
-        parse_mode="Markdown",
+        caption=(q.message.caption or "") + "\n\n❌ لطفاً دلیل/پیام را تایپ کنید تا برای مشتری ارسال شود.*",
         reply_markup=q.message.reply_markup
     )
 
@@ -2696,8 +2661,7 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await admin_ui_send_or_edit(
             update,
             context,
-            text="✅ *تحویل پست شد* و کد رهگیری برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال شد\n🆔 msg_id: `" + str(mid) + "`\n\n" + _admin_order_summary(order),
-            parse_mode="Markdown",
+            text="✅ تحویل پست شد و کد رهگیری برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال شد\n🆔 msg_id: `" + str(mid) + "`\n\n" + _admin_order_summary(order),
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
 
@@ -2791,7 +2755,6 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             update,
             context,
             text="✅ پیام برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال\n🆔 msg_id: `" + str(mid) + "`\n\n" + _admin_order_summary(order),
-            parse_mode="Markdown",
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
 
@@ -2850,7 +2813,6 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 f"پیام ادمین: {msg}\n\n"
                 "لطفاً روی «ارسال مجدد رسید» بزن و دوباره عکس رسید را ارسال کن."
             ),
-            parse_mode="Markdown",
             reply_markup=kb
         )
     except Exception as e:
@@ -2948,7 +2910,7 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("ابتدا روش ارسال را انتخاب کنید.", show_alert=True)
         text = _build_checkout_summary_text(context)
         try:
-            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(None), parse_mode="Markdown")
+            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(None))
         except Exception:
             pass
         return
@@ -3127,9 +3089,9 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         selected = customer.get("shipping_method")
         text = _build_checkout_summary_text(context)
         try:
-            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
+            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(selected))
         except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=shipping_methods_keyboard(selected), parse_mode="Markdown")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=shipping_methods_keyboard(selected))
         return
     
     if data.startswith("shipmethod:set:"):
@@ -3155,7 +3117,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
             [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
         ])
-        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        await q.edit_message_text(text, reply_markup=kb)
         await q.answer("روش ارسال ثبت شد ✅", show_alert=False)
         info = SHIPPING_INFO.get(method, "هزینه ارسال بر عهده مشتری است.")
         await q.answer(info, show_alert=True)
@@ -3170,7 +3132,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
             [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
         ])
-        await q.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+        await q.edit_message_text(text, reply_markup=kb)
         return
     # ---- end shipping method callbacks ----
     
@@ -3308,7 +3270,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             context,
             chat_id=int(order["user_chat_id"]),
             text=f"📦 سفارش `{order_id}` بسته‌بندی شد و به‌زودی ارسال می‌شود.",
-            parse_mode="Markdown",
             reply_markup=main_menu_reply(),
         )
         if ok:
@@ -3325,7 +3286,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             update,
             context,
             text="✅ وضعیت سفارش بروزرسانی شد: *بسته‌بندی شد*\n" + user_send_note + "\n\n" + _admin_order_summary(order),
-            parse_mode="Markdown",
             reply_markup=admin_order_keyboard(order_id, back_to=back_to),
         )
 
@@ -3507,9 +3467,7 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         
         await context.bot.send_message(
             chat_id=q.message.chat_id,
-            text=warning_message,
-            parse_mode="Markdown"
-        )
+            text=warning_message)
         # ----------------------------------------------------
 
         txt = "می‌تونی به خرید ادامه بدی یا سبد خرید رو مشاهده کنی"
