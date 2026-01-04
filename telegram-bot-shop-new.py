@@ -3293,10 +3293,9 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
             _order_log(order_id, "system", f"ارسال پیام بسته‌بندی به مشتری ناموفق بود. err={err}")
             user_send_note = "🔴 ارسال پیام به مشتری ناموفق بود (خطای تلگرام/مسدود بودن ربات)."
 
-        back_to = (context.bot_data.get("admin_last_back_to", {}) or {}).get(
-            int(update.effective_chat.id), "admin:queue"
-        )
+        # ✅ آپدیت پنل واحد ادمین (بدون شلوغ‌کاری)
         order = STORE.find_order(order_id) or order
+        back_to = (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue")
         await admin_ui_send_or_edit(
             update,
             context,
