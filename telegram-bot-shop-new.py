@@ -625,23 +625,48 @@ def _jalali_label_from_greg_date(d) -> str:
 
 def _parse_admin_date_to_greg(date_text: str):
     """ورودی تاریخ از ادمین را به تاریخ میلادی (date) تبدیل می‌کند.
-    فرمت‌های قابل قبول:
-      - 1404/10/14  (شمسی)
-      - 2026-01-04  (میلادی)
-      - 1404-10-14  (شمسی، با خط تیره)
+
+    ورودی‌های قابل قبول (با اعداد انگلیسی/فارسی/عربی):
+      - 1404/03/06 یا 1404/3/6  (شمسی)
+      - 1404-03-06 یا 1404-3-6  (شمسی)
+      - 2026-01-04 یا 2026/1/4  (میلادی)
+    جداکننده‌های رایج / و - پشتیبانی می‌شود (حتی برخی شکل‌های یونیکد).
     """
     if not date_text:
         return None
 
-    s = _to_english_digits(str(date_text)).strip()
+    s = _to_english_digits(date_text).strip()
+    # نرمال‌سازی جداکننده‌ها و حذف فاصله‌ها
     s = re.sub(r"\s+", "", s)
+    s = (
+        s.replace("／", "/")
+         .replace("⁄", "/")
+         .replace("∕", "/")
+         .replace("－", "-")
+         .replace("−", "-")
+         .replace("–", "-")
+         .replace("—", "-")
+         .replace(".", "/")
+    )
+
     m = re.match(r"^(\d{4})[\-/](\d{1,2})[\-/](\d{1,2})$", s)
     if not m:
         return None
 
-    y, mo, da = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        y = int(m.group(1))
+        mo = int(m.group(2))
+        da = int(m.group(3))
+    except Exception:
+        return None
 
-    # اگر سال شبیه شمسی بود، شمسی فرض می‌کنیم
+    # چک‌های اولیه
+    if not (1 <= mo <= 12):
+        return None
+    if not (1 <= da <= 31):
+        return None
+
+    # اگر شمسی بود
     if 1300 <= y <= 1500:
         try:
             jd = jdatetime.date(y, mo, da)
@@ -654,7 +679,6 @@ def _parse_admin_date_to_greg(date_text: str):
         return datetime(y, mo, da).date()
     except Exception:
         return None
-
 
 def admin_shipped_date_picker_keyboard(days: int = 10) -> InlineKeyboardMarkup:
     """انتخاب تاریخ برای مشاهده سفارش‌های ارسال‌شده."""
@@ -1342,9 +1366,23 @@ def _get_item_inventory(item: Dict) -> int:
 
 
 # تابع کمکی برای تبدیل ارقام فارسی به انگلیسی
-def _to_english_digits(text: str) -> str:
-    mapping = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
-    return text.translate(mapping)
+def _to_english_digits(value: str) -> str:
+    """تبدیل اعداد فارسی/عربی به انگلیسی.
+
+    پشتیبانی از:
+    - فارسی: ۰۱۲۳۴۵۶۷۸۹
+    - عربی (Arabic-Indic): ٠١٢٣٤٥٦٧٨٩
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    trans = {
+        ord("۰"): "0", ord("۱"): "1", ord("۲"): "2", ord("۳"): "3", ord("۴"): "4",
+        ord("۵"): "5", ord("۶"): "6", ord("۷"): "7", ord("۸"): "8", ord("۹"): "9",
+        ord("٠"): "0", ord("١"): "1", ord("٢"): "2", ord("٣"): "3", ord("٤"): "4",
+        ord("٥"): "5", ord("٦"): "6", ord("٧"): "7", ord("٨"): "8", ord("٩"): "9",
+    }
+    return s.translate(trans)
 
 
 def _merge_cart_item(cart:List[dict] , new_item : dict):
