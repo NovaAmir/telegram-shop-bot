@@ -635,8 +635,8 @@ def admin_shipped_keyboard(orders: List[dict], limit: int = 15) -> InlineKeyboar
 
 
 def admin_order_keyboard(order_id: str, back_to: str = "admin:queue") -> InlineKeyboardMarkup:
-    # پنل + دکمه برگشت به لیست (آماده ارسال / ارسال شده)
-    rows = admin_panel_keyboard(order_id).inline_keyboard
+    kb = admin_panel_keyboard(order_id).inline_keyboard
+    rows = [list(r) for r in kb]
     rows = [[InlineKeyboardButton("⬅️ برگشت به لیست سفارش‌ها", callback_data=back_to)]] + rows
     return InlineKeyboardMarkup(rows)
 
