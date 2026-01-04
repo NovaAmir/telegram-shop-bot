@@ -1158,7 +1158,11 @@ def format_card_number(card_number: str) -> str:
     return " ".join(card_number[i:i+4] for i in range(0, len(card_number), 4))
 
 def _build_cards_text_and_entities(cards: List[Dict]) -> Tuple[str, List[MessageEntity], List[str]]:
-    """Build card list text block + CODE entities (no backticks) and raw numbers."""
+    """Build card list text block + PRE entities (no backticks) and raw numbers.
+
+    نکته: برای اینکه کاربر راحت‌تر شماره کارت را کپی کند، شماره کارت به صورت «کد/پری‌فرمت» (PRE) نمایش داده می‌شود.
+    این کار در اکثر کلاینت‌های تلگرام یک تجربه کپی ساده‌تر ایجاد می‌کند.
+    """
     block = ""
     entities: List[MessageEntity] = []
     raw_numbers: List[str] = []
@@ -1167,12 +1171,18 @@ def _build_cards_text_and_entities(cards: List[Dict]) -> Tuple[str, List[Message
         raw = str(card.get("number", "")).strip()
         raw_numbers.append(raw)
         formatted = format_card_number(raw)
-        prefix = f"{i}) 💳 "
-        line1 = prefix + formatted + "\n"
-        entities.append(MessageEntity(type=MessageEntityType.CODE, offset=offset + len(prefix), length=len(formatted)))
-        line2 = f"👤 ({card.get('holder', '')})\n\n"
-        block += line1 + line2
-        offset += len(line1) + len(line2)
+
+        # هر کارت در یک بلوک جدا با شماره و نام دارنده
+        header = f"{i}) 💳\n"
+        number_line = f"{formatted}\n"
+        # PRE entity فقط روی خود شماره کارت
+        entities.append(MessageEntity(type=MessageEntityType.PRE, offset=offset + len(header), length=len(formatted)))
+        footer = f"👤 ({card.get('holder', '')})\n\n"
+
+        block += header + number_line + footer
+        offset += len(header) + len(number_line) + len(footer)
+
+    return block, entities, raw_numbers
     return block, entities, raw_numbers
 
 
@@ -1329,12 +1339,13 @@ def _format_pct(p: Optional[float]) -> str:
     except Exception:
         return "—"
 
-def _top_items_text(counter: Counter, n: int = 5) -> str:
+def _top_items_text(counter: Counter, n: int = 3) -> str:
+    """متن پرفروش‌ها (فقط ۳ مورد اول)."""
     if not counter:
         return "—"
     parts = []
     for pid, qty in counter.most_common(n):
-        parts.append(f"• {_product_name_by_id(pid)} × {qty}")
+        parts.append(f"• {_product_name_by_id(pid)} |({qty})")
     return "\n".join(parts) if parts else "—"
 
 # ------------------ end sales dashboard helpers ------------------
@@ -1640,96 +1651,133 @@ async def admin_unregister(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """داشبورد فروش روزانه/هفتگی/ماهیانه (فقط ادمینِ فعال‌شده با /admin)."""
+    """منوی داشبورد فروش (امروز/۷ روز گذشته/۳۰ روز گذشته)."""
     # 🔒 فقط ادمینِ فعال‌شده (اول /admin در همین چت)
     if not _is_admin_activated(update):
         if update.message:
-            await update.message.reply_text("⛔️ ابتدا در همین چت دستور /admin را بزنید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
+            await update.message.reply_text(
+                "⛔️ ابتدا در همین چت /admin را بزنید.",
+                reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)),
+            )
         elif update.callback_query:
             await update.callback_query.answer("⛔️ ابتدا در همین چت /admin را بزنید.", show_alert=True)
         return
 
-    orders = STORE.data.get("orders", []) or []
-
-    now_local = datetime.now(timezone.utc).astimezone(LOCAL_TZ)
-    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_start = today_start + timedelta(days=1)
-
-    # امروز
-    today = _sales_agg(orders, today_start, tomorrow_start)
-    yesterday = _sales_agg(orders, today_start - timedelta(days=1), today_start)
-
-    # ۷ روز اخیر (شامل امروز)
-    week_start = today_start - timedelta(days=6)
-    week_end = tomorrow_start
-    week = _sales_agg(orders, week_start, week_end)
-    prev_week = _sales_agg(orders, week_start - timedelta(days=7), week_start)
-
-    # ۳۰ روز اخیر (شامل امروز)
-    month_start = today_start - timedelta(days=29)
-    month_end = tomorrow_start
-    month = _sales_agg(orders, month_start, month_end)
-    prev_month = _sales_agg(orders, month_start - timedelta(days=30), month_start)
-
-    # وضعیت سفارش‌ها
-    status_counts = Counter((o.get("status") or "unknown") for o in orders)
-
-    # تاریخ شمسی برای نمایش
-    try:
-        j_now = jdatetime.datetime.fromgregorian(datetime=now_local.replace(tzinfo=None))
-        jalali_label = j_now.strftime("%Y/%m/%d")
-        greg_label = now_local.strftime("%Y-%m-%d")
-        date_label = f"{jalali_label} ({greg_label})"
-    except Exception:
-        date_label = now_local.strftime("%Y-%m-%d")
-
-    lines = []
-    lines.append("📊 *داشبورد فروش*")
-    lines.append(f"📅 تاریخ: {date_label}")
-    lines.append("")
-    lines.append("🗓 *امروز*")
-    lines.append(f"• تعداد سفارش پرداخت‌شده: {today['count']}")
-    lines.append(f"• مبلغ فروش: *{_ftm_toman(today['amount'])}*")
-    lines.append(f"• میانگین فروش : {_ftm_toman(today['avg'])}")
-    lines.append(f"• تغییر نسبت به دیروز : {_format_pct(_pct_change(today['amount'], yesterday['amount']))}")
-    lines.append("")
-    lines.append("📅 *۷ روز اخیر*")
-    lines.append(f"• تعداد سفارش پرداخت شده: {week['count']}")
-    lines.append(f"• فروش: *{_ftm_toman(week['amount'])}*")
-    lines.append(f"• میانگین فروش : {_ftm_toman(week['avg'])}")
-    lines.append(f"• تغییر نسبت به ۷ روز قبل : {_format_pct(_pct_change(week['amount'], prev_week['amount']))}")
-    lines.append("• پرفروش‌ها:")
-    lines.append(_top_items_text(week["items"]))
-    lines.append("")
-    lines.append("📆 *۳۰ روز اخیر*")
-    lines.append(f"• تعداد سفارش پرداخت شده: {month['count']}")
-    lines.append(f"• فروش: *{_ftm_toman(month['amount'])}*")
-    lines.append(f"• میانگین فروش : {_ftm_toman(month['avg'])}")
-    lines.append(f"• تغییر نسبت به ۳۰ روز قبل : {_format_pct(_pct_change(month['amount'], prev_month['amount']))}")
-    lines.append("• پرفروش‌ها:")
-    lines.append(_top_items_text(month["items"]))
-    lines.append("")
-    lines.append("📦 *وضعیت سفارش‌ها*")
-    for key, label in ORDER_STATUS_FA.items():
-        lines.append(f"• {label}: {status_counts.get(key, 0)}")
-
-
-    msg = "\n".join(lines)
-
+    msg = "📊 داشبورد فروش\n\nیک بازه را انتخاب کنید:"
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 بروزرسانی داشبورد", callback_data="admin:dashboard")],
-        [InlineKeyboardButton("📋 سفارش‌های آماده ارسال", callback_data="admin:queue")],
+        [
+            InlineKeyboardButton("امروز", callback_data="admin:dashboard:today"),
+            InlineKeyboardButton("۷ روز گذشته", callback_data="admin:dashboard:week"),
+        ],
+        [InlineKeyboardButton("۳۰ روز گذشته", callback_data="admin:dashboard:month")],
+        [
+            InlineKeyboardButton("📋 سفارش‌های آماده ارسال", callback_data="admin:queue"),
+            InlineKeyboardButton("🚚 سفارش‌های ارسال شده", callback_data="admin:shipped"),
+        ],
     ])
 
     if update.message:
         await update.message.reply_text(msg, reply_markup=kb)
-    elif update.callback_query:
+    else:
         q = update.callback_query
         await q.answer()
         try:
             await q.edit_message_text(msg, reply_markup=kb)
         except Exception:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, reply_markup=kb)
+
+
+async def admin_dashboard_show_period(update: Update, context: ContextTypes.DEFAULT_TYPE, period: str) -> None:
+    """نمایش داشبورد فروش برای یک بازه."""
+    # 🔒 فقط ادمینِ فعال‌شده
+    if not _is_admin_activated(update):
+        if update.callback_query:
+            await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
+    orders = STORE.data.get("orders", []) or []
+    now_local = datetime.now(timezone.utc).astimezone(LOCAL_TZ)
+    today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
+
+    if period == "today":
+        title = "امروز"
+        start = today_start
+        end = tomorrow_start
+        prev_start = start - timedelta(days=1)
+        prev_end = start
+        compare_label = "نسبت به دیروز"
+        range_label = _jalali_label_from_greg_date(start.date())
+    elif period == "week":
+        title = "۷ روز گذشته"
+        start = today_start - timedelta(days=6)
+        end = tomorrow_start
+        prev_start = start - timedelta(days=7)
+        prev_end = start
+        compare_label = "نسبت به ۷ روز قبل"
+        range_label = f"{_jalali_label_from_greg_date(start.date())} تا {_jalali_label_from_greg_date((end - timedelta(days=1)).date())}"
+    else:
+        title = "۳۰ روز گذشته"
+        start = today_start - timedelta(days=29)
+        end = tomorrow_start
+        prev_start = start - timedelta(days=30)
+        prev_end = start
+        compare_label = "نسبت به ۳۰ روز قبل"
+        range_label = f"{_jalali_label_from_greg_date(start.date())} تا {_jalali_label_from_greg_date((end - timedelta(days=1)).date())}"
+
+    curr = _sales_agg(orders, start, end)
+    prev = _sales_agg(orders, prev_start, prev_end)
+    pct_orders = _format_pct(_pct_change(curr.get("count", 0), prev.get("count", 0)))
+    pct_amount = _format_pct(_pct_change(curr.get("amount", 0), prev.get("amount", 0)))
+
+    # وضعیت سفارش‌ها (کلی)
+    status_counts: Dict[str, int] = {}
+    for o in (orders or []):
+        s = (o.get("status") or "unknown")
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    lines = []
+    lines.append(f"📊 داشبورد فروش - {title}")
+    lines.append(f"بازه: {range_label}")
+    lines.append("")
+    lines.append(f"تعداد سفارشِ پرداخت‌شده: {curr.get('count', 0)}  ({compare_label}: {pct_orders})")
+    lines.append(f"فروش: {format_toman(curr.get('amount', 0))}  ({compare_label}: {pct_amount})")
+    avg = 0
+    try:
+        avg = int(curr.get("amount", 0)) // max(int(curr.get("count", 0)), 1)
+    except Exception:
+        avg = 0
+    lines.append(f"میانگین هر سفارش: {format_toman(avg)}")
+    lines.append("")
+    lines.append("پرفروش‌ها (۳ مورد):")
+    lines.append(_top_items_text(curr.get("items", Counter()), n=3))
+    lines.append("")
+    lines.append("📦 وضعیت سفارش‌ها (کلی):")
+    for key, label in ORDER_STATUS_FA.items():
+        lines.append(f"• {label}: {status_counts.get(key, 0)}")
+
+    msg = "\n".join(lines)
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⬅️ انتخاب بازه", callback_data="admin:dashboard"),
+            InlineKeyboardButton("🔄 بروزرسانی", callback_data=f"admin:dashboard:{period}"),
+        ],
+        [
+            InlineKeyboardButton("📋 سفارش‌های آماده ارسال", callback_data="admin:queue"),
+            InlineKeyboardButton("🚚 سفارش‌های ارسال شده", callback_data="admin:shipped"),
+        ],
+    ])
+
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        try:
+            await q.edit_message_text(msg, reply_markup=kb)
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, reply_markup=kb)
+    elif update.message:
+        await update.message.reply_text(msg, reply_markup=kb)
 
 
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2590,16 +2638,14 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n"
     f"🚚 روش ارسال: **{ship_label}**\n"
     f"{shipping_note}\n\n"
-    "🔹 اطلاعات حساب‌های فروشگاه (برای کپی، روی شماره بزنید):\n\n"
+    "🔹 اطلاعات حساب‌های فروشگاه (برای کپی، روی شماره کارت بزنید و گزینه Copy را انتخاب کنید):\n\n"
     f"{cards_text}\n"
     "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
 )
-
-    kb_rows = []
-    for idx, raw in enumerate(raw_card_numbers, start=1):
-        kb_rows.append([InlineKeyboardButton(f"📋 ارسال شماره کارت {idx} برای کپی", callback_data=f"copycard:{idx}:{order_id}")])
-    kb_rows.append([InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")])
-    kb_rows.append([InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")])
+    kb_rows = [
+        [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
+        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+    ]
     kb = InlineKeyboardMarkup(kb_rows)
     if update.callback_query:
         q = update.callback_query
@@ -3348,28 +3394,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     data = (q.data or "").strip()
 
 
-    # --- one-click helper: send raw card number for easy copy ---
-    if data.startswith("copycard:"):
-        # format: copycard:{idx}:{order_id}
-        try:
-            _p = data.split(":")
-            idx = int(_p[1])
-            card = CARDS[idx-1] if 1 <= idx <= len(CARDS) else None
-        except Exception:
-            card = None
-        if not card:
-            await q.answer("شماره کارت پیدا نشد.", show_alert=True)
-            return
-        raw = str(card.get("number", "")).strip()
-        entities = [MessageEntity(type=MessageEntityType.CODE, offset=0, length=len(raw))]
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=raw,
-            entities=entities,
-            reply_to_message_id=q.message.message_id if q.message else None,
-        )
-        await q.answer("ارسال شد. روی شماره، Copy بزنید.")
-        return
 
     # 🔒 دسترسی به callback های ادمین
     if (data.startswith("admin:") or data.startswith("ship:")) and not _is_admin_activated(update):
@@ -3379,6 +3403,15 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
 
     if data == "admin:dashboard":
         await admin_dashboard(update, context)
+        return
+
+    if data.startswith("admin:dashboard:"):
+        # admin:dashboard:today|week|month
+        period = data.split("admin:dashboard:", 1)[1].strip()
+        if period in ("today", "week", "month"):
+            await admin_dashboard_show_period(update, context, period)
+        else:
+            await admin_dashboard(update, context)
         return
 
     if data == "admin:queue":
