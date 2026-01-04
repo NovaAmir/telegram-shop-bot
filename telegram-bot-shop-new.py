@@ -571,24 +571,143 @@ def _admin_ready_orders() -> List[dict]:
     return res
 
 
+def _order_fulfilled_dt_local(order: dict) -> Optional[datetime]:
+    """زمان ارسال (ثبت کد رهگیری) را به زمان محلی برمی‌گرداند."""
+    dt = _parse_dt_utc_z(order.get("fulfilled_at"))
+    if not dt:
+        return None
+    try:
+        return dt.astimezone(LOCAL_TZ)
+    except Exception:
+        return None
+
+
 def _admin_shipped_orders() -> List[dict]:
-    """سفارش‌هایی که تحویل پست شده‌اند (کد رهگیری ثبت شده) ولی هنوز تحویل نهایی (delivered) نشده‌اند."""
+    """همه سفارش‌هایی که «ارسال شده‌اند» (کد رهگیری ثبت شده) — شامل shipped و delivered."""
     orders = STORE.data.get("orders", []) or []
 
     def _score(o: dict) -> str:
+        # fulfilled_at وقتی کد رهگیری ثبت می‌شود ذخیره می‌شود
         return o.get("fulfilled_at") or o.get("confirmed_at") or o.get("paid_at") or o.get("created_at") or ""
 
     res: List[dict] = []
     for o in orders:
         ship = o.get("shipping_status") or "pending"
-        if ship == "shipped":
+        if ship in ("shipped", "delivered"):
             res.append(o)
 
     res.sort(key=_score, reverse=True)
     return res
 
 
-# (سازگاری با نسخه‌های قبلی) — همان «آماده ارسال»
+def _admin_shipped_orders_by_date(target_date) -> List[dict]:
+    """سفارش‌های ارسال‌شده در تاریخ مشخص (بر اساس زمان محلی). target_date از نوع date است."""
+    orders = _admin_shipped_orders()
+
+    res: List[dict] = []
+    for o in orders:
+        dt_local = _order_fulfilled_dt_local(o)
+        if dt_local and dt_local.date() == target_date:
+            res.append(o)
+
+    # اگر fulfilled_at برای سفارش‌های قدیمی نبود، چیزی برنمی‌گردد. (می‌توانید بعداً مهاجرت بزنید)
+    res.sort(key=lambda o: (o.get("fulfilled_at") or ""), reverse=True)
+    return res
+
+
+def _jalali_label_from_greg_date(d) -> str:
+    try:
+        jd = jdatetime.date.fromgregorian(date=d)
+        return jd.strftime("%Y/%m/%d")
+    except Exception:
+        return d.strftime("%Y-%m-%d")
+
+
+def _parse_admin_date_to_greg(date_text: str):
+    """ورودی تاریخ از ادمین را به تاریخ میلادی (date) تبدیل می‌کند.
+    فرمت‌های قابل قبول:
+      - 1404/10/14  (شمسی)
+      - 2026-01-04  (میلادی)
+      - 1404-10-14  (شمسی، با خط تیره)
+    """
+    if not date_text:
+        return None
+
+    s = _to_english_digits(str(date_text)).strip()
+    s = re.sub(r"\s+", "", s)
+    m = re.match(r"^(\d{4})[\-/](\d{1,2})[\-/](\d{1,2})$", s)
+    if not m:
+        return None
+
+    y, mo, da = int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+    # اگر سال شبیه شمسی بود، شمسی فرض می‌کنیم
+    if 1300 <= y <= 1500:
+        try:
+            jd = jdatetime.date(y, mo, da)
+            return jd.togregorian()
+        except Exception:
+            return None
+
+    # در غیر این صورت میلادی
+    try:
+        return datetime(y, mo, da).date()
+    except Exception:
+        return None
+
+
+def admin_shipped_date_picker_keyboard(days: int = 10) -> InlineKeyboardMarkup:
+    """انتخاب تاریخ برای مشاهده سفارش‌های ارسال‌شده."""
+    today = datetime.now(timezone.utc).astimezone(LOCAL_TZ).date()
+    buttons = []
+    row = []
+    for i in range(days):
+        d = today - timedelta(days=i)
+        lbl = _jalali_label_from_greg_date(d)
+        row.append(InlineKeyboardButton(f"📅 {lbl}", callback_data=f"admin:shipped:date:{d.isoformat()}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    # سفارش‌های ارسال‌شده‌ای که تاریخ ارسال (fulfilled_at) ندارند
+    try:
+        missing = [o for o in _admin_shipped_orders() if not o.get("fulfilled_at")]
+    except Exception:
+        missing = []
+    if missing:
+        buttons.append([InlineKeyboardButton(f"❓ بدون تاریخ ({len(missing)})", callback_data="admin:shipped:date:unknown")])
+
+
+    buttons += [
+        [InlineKeyboardButton("📅 وارد کردن تاریخ", callback_data="admin:shipped:enter_date")],
+        [InlineKeyboardButton("📋 آماده ارسال", callback_data="admin:queue")],
+        [InlineKeyboardButton("📊 داشبورد فروش", callback_data="admin:dashboard")],
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def admin_shipped_list_keyboard(orders: List[dict], date_iso: str, limit: int = 20) -> InlineKeyboardMarkup:
+    """کیبورد لیست سفارش‌های ارسال‌شده برای یک روز."""
+    btns = []
+    for o in orders[:limit]:
+        oid = o.get("order_id")
+        if not oid:
+            continue
+        name = (o.get("customer") or {}).get("name") or "—"
+        track = o.get("tracking_code") or "—"
+        total = _ftm_toman(o.get("total", 0))
+        btns.append([InlineKeyboardButton(f"🚚 {oid} | {name} | {track} | {total}", callback_data=f"admin:open:shipped:{oid}")])
+
+    controls = [
+        [InlineKeyboardButton("⬅️ انتخاب تاریخ دیگر", callback_data="admin:shipped")],
+        [InlineKeyboardButton("🔄 بروزرسانی", callback_data=f"admin:shipped:date:{date_iso}")],
+        [InlineKeyboardButton("📋 آماده ارسال", callback_data="admin:queue")],
+        [InlineKeyboardButton("📊 داشبورد فروش", callback_data="admin:dashboard")],
+    ]
+    return InlineKeyboardMarkup(btns + controls)
+
+# (سازگاری با نسخه‌های قبلی)# (سازگاری با نسخه‌های قبلی) — همان «آماده ارسال»
 def _admin_queue_orders() -> List[dict]:
     return _admin_ready_orders()
 
@@ -726,7 +845,7 @@ async def admin_queue_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def admin_shipped_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """نمایش لیست سفارش‌های «ارسال شده» (کد رهگیری ثبت شده)."""
+    """صفحه انتخاب تاریخ برای مشاهده سفارش‌های «ارسال شده»."""
     if update.callback_query:
         await update.callback_query.answer()
     if not _is_admin_activated(update):
@@ -736,27 +855,120 @@ async def admin_shipped_show(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
         return
 
-    orders = _admin_shipped_orders()
+    shipped_all = _admin_shipped_orders()
+    await admin_ui_send_or_edit(
+        update,
+        context,
+        text=f"""🚚 *سفارش‌های ارسال شده*
+کل سفارش‌های ارسال‌شده: `{len(shipped_all)}`
+
+یک تاریخ را انتخاب کنید تا سفارش‌های ارسال‌شده در همان روز نمایش داده شود.""",
+        reply_markup=admin_shipped_date_picker_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+async def admin_shipped_show_date(update: Update, context: ContextTypes.DEFAULT_TYPE, date_iso: str) -> None:
+    """نمایش سفارش‌های ارسال‌شده در یک روز مشخص."""
+    if update.callback_query:
+        await update.callback_query.answer()
+
+    if not _is_admin_activated(update):
+        if update.callback_query:
+            await update.callback_query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
+    # special: shipped orders with missing fulfilled_at
+    if (date_iso or "").strip().lower() == "unknown":
+        try:
+            orders = [o for o in _admin_shipped_orders() if not o.get("fulfilled_at")]
+        except Exception:
+            orders = []
+        header = "📅 تاریخ: `بدون تاریخ`"
+
+        if not orders:
+            await admin_ui_send_or_edit(
+                update,
+                context,
+                text=f"🚚 *سفارش ارسال‌شده‌ای در بخش «بدون تاریخ» ندارید.*\n{header}",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ انتخاب تاریخ دیگر", callback_data="admin:shipped")],
+                    [InlineKeyboardButton("📋 آماده ارسال", callback_data="admin:queue")],
+                    [InlineKeyboardButton("📊 داشبورد فروش", callback_data="admin:dashboard")],
+                ]),
+                parse_mode="Markdown",
+            )
+            return
+
+        # remember view
+        try:
+            _m = context.bot_data.setdefault("admin_current_shipped_back", {})
+            _m[int(update.effective_chat.id)] = "admin:shipped:date:unknown"
+        except Exception:
+            pass
+
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text=f"🚚 *سفارش‌های ارسال شده*\n{header}\nتعداد: `{len(orders)}`\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
+            reply_markup=admin_shipped_list_keyboard(orders, "unknown"),
+            parse_mode="Markdown",
+        )
+        return
+
+
+    try:
+        target_date = datetime.fromisoformat(date_iso).date()
+    except Exception:
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="❌ تاریخ نامعتبر است. لطفاً دوباره تلاش کنید.",
+            reply_markup=admin_shipped_date_picker_keyboard(),
+            parse_mode="Markdown",
+        )
+        return
+
+    # remember current shipped view for the back button inside order page
+    try:
+        _m = context.bot_data.setdefault("admin_current_shipped_back", {})
+        _m[int(update.effective_chat.id)] = f"admin:shipped:date:{date_iso}"
+    except Exception:
+        pass
+
+    orders = _admin_shipped_orders_by_date(target_date)
+
+    # labels for header
+    jalali = _jalali_label_from_greg_date(target_date)
+    greg = target_date.strftime("%Y-%m-%d")
+    header = f"📅 تاریخ: `{jalali} ({greg})`"
+
     if not orders:
         await admin_ui_send_or_edit(
             update,
             context,
-            text="🚚 *سفارشی در وضعیت «ارسال شده» ندارید.*\n\n(یعنی کد رهگیری ثبت شده باشد و هنوز delivered نشده باشد.)",
+            text=f"""🚚 *سفارش ارسال‌شده‌ای برای این تاریخ ندارید.*
+{header}""",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 بروزرسانی لیست", callback_data="admin:shipped")],
+                [InlineKeyboardButton("⬅️ انتخاب تاریخ دیگر", callback_data="admin:shipped")],
                 [InlineKeyboardButton("📋 آماده ارسال", callback_data="admin:queue")],
                 [InlineKeyboardButton("📊 داشبورد فروش", callback_data="admin:dashboard")],
             ]),
+            parse_mode="Markdown",
         )
         return
 
     await admin_ui_send_or_edit(
         update,
         context,
-        text=f"🚚 *سفارش‌های ارسال شده*\nتعداد: `{len(orders)}`\n\nروی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.",
-        reply_markup=admin_shipped_keyboard(orders),
-    )
+        text=f"""🚚 *سفارش‌های ارسال شده*
+{header}
+تعداد: `{len(orders)}`
 
+روی هر سفارش بزنید تا گزینه‌های مدیریت نمایش داده شود.""",
+        reply_markup=admin_shipped_list_keyboard(orders, date_iso),
+        parse_mode="Markdown",
+    )
 
 def _admin_order_summary(order: dict) -> str:
     oid = order.get("order_id")
@@ -2685,7 +2897,37 @@ async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             context.bot_data.pop("admin_pending_tracking", None)
         return
 
-    # ---------------- admin message flow ----------------
+    
+    # ---------------- shipped date filter flow ----------------
+    shipdate_map = context.bot_data.get("admin_pending_shipped_date") or {}
+    pending_shipdate = shipdate_map.get(chat_id) if isinstance(shipdate_map, dict) else None
+    if pending_shipdate:
+        target = _parse_admin_date_to_greg(text)
+        if not target:
+            await admin_ui_send_or_edit(
+                update,
+                context,
+                text="""❌ *فرمت تاریخ درست نیست.*
+مثال: `1404/10/14` یا `2026-01-04`""",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ بازگشت", callback_data="admin:shipped")],
+                ]),
+                parse_mode="Markdown",
+            )
+            return
+
+        # clear pending
+        try:
+            shipdate_map.pop(chat_id, None)
+            if not shipdate_map:
+                context.bot_data.pop("admin_pending_shipped_date", None)
+        except Exception:
+            context.bot_data.pop("admin_pending_shipped_date", None)
+
+        await admin_shipped_show_date(update, context, target.isoformat())
+        return
+
+# ---------------- admin message flow ----------------
     msg_map = context.bot_data.get("admin_pending_msg") or {}
     pending_msg = msg_map.get(chat_id) if isinstance(msg_map, dict) else None
     if pending_msg:
@@ -3052,17 +3294,63 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
         await admin_queue_show(update, context)
         return
 
+    
     if data == "admin:shipped":
         await admin_shipped_show(update, context)
         return
 
+    if data.startswith("admin:shipped:date:"):
+        # admin:shipped:date:YYYY-MM-DD
+        try:
+            date_iso = data.split("admin:shipped:date:", 1)[1]
+        except Exception:
+            date_iso = ""
+        await admin_shipped_show_date(update, context, date_iso)
+        return
+
+    if data == "admin:shipped:enter_date":
+        # ask admin to type date (message will be captured by admin_text_reply)
+        try:
+            m = context.bot_data.setdefault("admin_pending_shipped_date", {})
+            m[int(update.effective_chat.id)] = {"kind": "shipped_date"}
+        except Exception:
+            context.bot_data["admin_pending_shipped_date"] = {int(update.effective_chat.id): {"kind": "shipped_date"}}
+
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="""📅 *تاریخ را وارد کنید*
+فرمت‌های قابل قبول:
+• `1404/10/14` (شمسی)
+• `2026-01-04` (میلادی)
+
+بعد از ارسال، همانجا لیست سفارش‌های ارسال‌شده‌ی آن تاریخ نمایش داده می‌شود.""",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ بازگشت", callback_data="admin:shipped")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
     if data.startswith("admin:open:"):
-        # admin:open:{ready|shipped}:{order_id}
+        # admin:open:<list_tag>:<order_id>
         _, _, list_tag, order_id = data.split(":", 3)
-        back_to = "admin:queue" if list_tag == "ready" else "admin:shipped"
+
+        if list_tag == "ready":
+            back_to = "admin:queue"
+        else:
+            # اگر ادمین از نمای تاریخِ ارسال‌شده‌ها آمده باشد، همانجا برگردد
+            try:
+                back_to = (context.bot_data.get("admin_current_shipped_back", {}) or {}).get(
+                    int(update.effective_chat.id),
+                    "admin:shipped",
+                )
+            except Exception:
+                back_to = "admin:shipped"
+
         await admin_open_order(update, context, order_id, back_to=back_to)
         return
- 
+
 
     logger.info(f"Received callback data: {data}")
     logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
