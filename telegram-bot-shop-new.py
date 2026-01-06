@@ -16,6 +16,8 @@ import asyncio
 import threading
 from flask import Flask, request
 import jdatetime
+import html
+import re
 
 
 CUSTOMER_NAME, CUSTOMER_PHONE, CUSTOMER_ADDRESS, CUSTOMER_POSTAL = range(4)
@@ -1163,34 +1165,20 @@ def format_card_number(card_number: str) -> str:
     return f"{LRI}{grouped}{PDI}"
 
 
-def _build_cards_text_and_entities(cards: List[Dict]) -> Tuple[str, List[MessageEntity], List[str]]:
-    """Build card list text block + PRE entities (no backticks) and raw numbers.
-
-    نکته: برای اینکه کاربر راحت‌تر شماره کارت را کپی کند، شماره کارت به صورت «کد/پری‌فرمت» (PRE) نمایش داده می‌شود.
-    این کار در اکثر کلاینت‌های تلگرام یک تجربه کپی ساده‌تر ایجاد می‌کند.
-    """
+def _build_cards_text_and_entities(cards):
     block = ""
-    entities: List[MessageEntity] = []
-    raw_numbers: List[str] = []
-    offset = 0
+    raw_numbers = []
     for i, card in enumerate(cards, start=1):
-        raw = str(card.get("number", "")).strip()
+        raw = re.sub(r"\D+", "", str(card.get("number", "") or "")).strip()
         raw_numbers.append(raw)
-        formatted = format_card_number(raw)
-
-        # هر کارت در یک بلوک جدا با شماره و نام دارنده
-        header = f"{i}) 💳\n"
-        number_line = f"{formatted}\n"
-        # PRE entity فقط روی خود شماره کارت
-        entities.append(MessageEntity(type=MessageEntityType.PRE, offset=offset + len(header), length=len(formatted)))
-        footer = f"👤 ({card.get('holder', '')})\n\n"
-
-        block += header + number_line + footer
-        offset += len(header) + len(number_line) + len(footer)
-
-    return block, entities, raw_numbers
-    return block, entities, raw_numbers
-
+        grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
+        holder = html.escape(str(card.get("holder", "") or ""))
+        block += (
+            f"{i}) 💳\n"
+            f"<pre>{grouped}</pre>\n"
+            f"👤 ({holder})\n\n"
+        )
+    return block, [], raw_numbers
 
 
 def _product_photo_for_list(p:Dict) -> Optional[str]:
