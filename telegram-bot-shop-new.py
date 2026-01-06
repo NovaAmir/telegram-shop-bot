@@ -2613,8 +2613,10 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
     context.user_data["current_order_id"] = order_id
     return order_id
 
+
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     """Send card number (copyable) + request receipt."""
+
     # 🧹 حذف پیام «فرم مشخصات تکمیل شد» تا زیر پیام پرداخت نمایش داده نشود
     mid = context.user_data.pop("form_done_msg_id", None)
     if mid:
@@ -2623,51 +2625,54 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         except Exception:
             pass
 
-    total = 0
     order = STORE.find_order(order_id)
-    if order:
-        total = order.get("total", 0)
-    cards_text, cards_entities, raw_card_numbers = _build_cards_text_and_entities(CARDS)
+    total = int(order.get("total", 0)) if order else 0
 
-    shipping_method = (order.get("shipping_method") or order.get("customer", {}).get("shipping_method"))
+    # کارت‌ها (با فاصله‌های ۴تایی + entity PRE برای کپی راحت)
+    cards_text, cards_entities, _raw_numbers = _build_cards_text_and_entities(CARDS)
+
+    shipping_method = (order.get("shipping_method") or (order.get("customer", {}) or {}).get("shipping_method")) if order else None
     shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
-
     ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
-    text = (
-    "💳 **پرداخت کارت به کارت**\n\n"
-    f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n"
-    f"🚚 روش ارسال: **{ship_label}**\n"
-    f"{shipping_note}\n\n"
-    "🔹 اطلاعات حساب‌های فروشگاه (برای کپی، روی شماره کارت بزنید و گزینه Copy را انتخاب کنید):\n\n"
-    f"{cards_text}\n"
-    "📸 بعد از پرداخت، روی دکمه زیر بزنید و *عکس رسید پرداخت* را ارسال کنید."
-)
-    kb_rows = [
+
+    # 1) پیام توضیحات (Markdown) — بدون entities
+    intro = (
+        "💳 **پرداخت کارت به کارت**\n\n"
+        f"🔸 مبلغ قابل پرداخت: **{_ftm_toman(total)}**\n"
+        f"🚚 روش ارسال: **{ship_label}**\n"
+        f"{shipping_note}\n\n"
+        "🔹 اطلاعات حساب‌های فروشگاه:\n"
+        "برای کپی، روی شماره کارت بزنید و گزینه Copy را انتخاب کنید."
+    )
+
+    kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
-    ]
-    kb = InlineKeyboardMarkup(kb_rows)
+    ])
+
+    chat_id = update.effective_chat.id
+
+    # اگر از callback آمدیم، پیام قبلی را با intro ادیت می‌کنیم
     if update.callback_query:
         q = update.callback_query
         await q.answer()
         try:
-            shift = text.find(cards_text)
-            if shift < 0:
-                shift = 0
-            entities = [MessageEntity(type=e.type, offset=e.offset + shift, length=e.length) for e in cards_entities]
-            await q.edit_message_text(text, reply_markup=kb, entities=entities)
+            await q.edit_message_text(intro, parse_mode="Markdown", reply_markup=kb)
         except Exception:
-            shift = text.find(cards_text)
-            if shift < 0:
-                shift = 0
-            entities = [MessageEntity(type=e.type, offset=e.offset + shift, length=e.length) for e in cards_entities]
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, entities=entities)
+            await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown", reply_markup=kb)
     else:
-        shift = text.find(cards_text)
-        if shift < 0:
-            shift = 0
-        entities = [MessageEntity(type=e.type, offset=e.offset + shift, length=e.length) for e in cards_entities]
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, entities=entities)
+        await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode="Markdown", reply_markup=kb)
+
+    # 2) پیام جداگانه فقط برای کارت‌ها — بدون parse_mode، فقط entities (برای کپی راحت)
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=cards_text,
+        entities=cards_entities,
+        disable_web_page_preview=True,
+    )
+
+
+
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     q = update.callback_query
     await q.answer()
