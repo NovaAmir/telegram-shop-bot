@@ -2684,3 +2684,1397 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
             disable_web_page_preview=True,
         )
 
+async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    q = update.callback_query
+    await q.answer()
+    mid = context.user_data.pop("form_done_msg_id", None)
+    if mid:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=int(mid))
+        except Exception:
+            pass
+    order = STORE.find_order(order_id)
+    if not order:
+        await q.edit_message_text("❌ سفارش پیدا نشد.", reply_markup=main_menu())
+        return
+
+    # پاکسازی رزروهای منقضی شده
+    _cleanup_expired_reservations()
+
+    # رزرو موجودی در صورت نیاز (برای جلوگیری از فروش بیش از موجودی)
+    ok = _reserve_inventory_for_order(order_id)
+    if not ok:
+        STORE.update_order(order_id, status="cancelled", cancel_reason="out_of_stock")
+        await q.edit_message_text("❌ متأسفانه موجودی این سفارش تمام شده است. اگر پرداخت انجام داده‌اید، با پشتیبانی هماهنگ کنید.", reply_markup=main_menu())
+        return
+
+    # mark that we are waiting for a photo from this user
+    context.user_data["awaiting_receipt"] = order_id
+
+    text = (
+        "📸 لطفاً *عکس رسید پرداخت* را همینجا ارسال کنید.\n\n"
+        "اگر اشتباهی وارد این مرحله شدید، می‌توانید انصراف دهید."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ انصراف", callback_data="receipt:cancel")],
+    ])
+    try:
+        await q.edit_message_text(text, reply_markup=kb)
+    except Exception:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb)
+
+
+async def receipt_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    await q.answer()
+
+    oid = context.user_data.get("awaiting_receipt")
+    if oid:
+        _release_inventory_for_order(oid, reason="کاربر فرآیند ارسال رسید را لغو کرد و رزرو آزاد شد.")
+        STORE.update_order(oid, status="cancelled", cancel_reason="user_cancelled")
+
+    context.user_data.pop("awaiting_receipt", None)
+    context.user_data.pop("active_order_id", None)
+    context.user_data.pop("current_order_id", None)
+    await q.edit_message_text("انصراف داده شد. از منو می‌توانید ادامه دهید.", reply_markup=main_menu())
+
+
+async def on_receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle user uploading receipt photo."""
+    if not update.message or not update.message.photo:
+        return
+
+    order_id = context.user_data.get("awaiting_receipt")
+    if not order_id:
+        return  # not in receipt flow
+
+    order = STORE.find_order(order_id)
+    if not order:
+        context.user_data.pop("awaiting_receipt", None)
+        await update.message.reply_text("❌ سفارش پیدا نشد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
+        return
+
+    # take best quality
+    photo = update.message.photo[-1]
+    file_id = photo.file_id
+
+    # update order
+    STORE.update_order(order_id, status="receipt_submitted", receipt={"file_id": file_id, "submitted_at": datetime.utcnow().isoformat() + "Z"})
+    context.user_data.pop("awaiting_receipt", None)
+
+    await update.message.reply_text(
+        "✅ رسید دریافت شد. پس از بررسی توسط ادمین، نتیجه به شما اطلاع داده می‌شود.",
+        reply_markup=main_menu_reply()
+    )
+
+    admin_ids = _get_admin_chat_ids()
+    if not admin_ids:
+        # admin not registered yet
+        await update.message.reply_text(
+            f"⚠️ ادمین هنوز در ربات ثبت نشده است. لطفاً به ادمین ({ADMIN_USERNAME}) اطلاع دهید داخل ربات دستور /admin را بزند.",
+            reply_markup=main_menu_reply()
+        )
+        return
+
+
+    # build order summary for admin
+    lines = []
+    for i, it in enumerate(order.get("items", []), 1):
+        lines.append(
+            f"{i}) {it['name']} | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
+            f"تعداد: {it['qty']} | {_ftm_toman(it['qty'] * it['price'])}"
+        )
+
+    admin_text = (
+        "🧾 **رسید پرداخت جدید**\n"
+        f"OrderID: {order_id}\n"
+        f"UserChatID: {order.get('user_chat_id')}\n"
+        f"User: @{order.get('username') or '—'}\n"
+        f"جمع کل: **{_ftm_toman(order.get('total', 0))}**\n\n"
+        "👤 مشتری:\n"
+        f"نام: {order['customer'].get('name')}\n"
+        f"موبایل: {order['customer'].get('phone')}\n"
+        f"آدرس: {order['customer'].get('address')}\n"
+        f"کدپستی: {order['customer'].get('postal')}\n\n"
+        "اقلام:\n" + "\n".join(lines)
+    )
+
+    admin_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ تایید پرداخت", callback_data=f"admin:approve:{order_id}")],
+        [InlineKeyboardButton("❌ مشکل دارد", callback_data=f"admin:reject:{order_id}")],
+    ])
+
+    try:
+        await _broadcast_admin_photo(
+            context,
+            photo=file_id,
+            caption=admin_text,
+            reply_markup=admin_kb
+        )
+    except Exception as e:
+        logger.error("Failed to send receipt to admin: %s", e)
+
+
+async def admin_approve(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    q = update.callback_query
+    await q.answer()
+
+    # 🔒 فقط ادمین‌های مجاز
+    if not _is_admin_activated(update):
+        await q.answer("دسترسی ندارید.", show_alert=True)
+        return
+
+
+    order = STORE.find_order(order_id)
+    if not order:
+        await q.edit_message_text("❌ سفارش پیدا نشد.")
+        return
+
+    if order.get("status") == "paid_confirmed":
+        await q.answer("قبلاً تایید شده.", show_alert=False)
+        return
+
+    # موجودی قبلاً هنگام checkout_pay رزرو شده است؛ اینجا کم‌کردن دوباره انجام نمی‌شود.
+    STORE.update_order(order_id, status="paid_confirmed", confirmed_at=datetime.utcnow().isoformat() + "Z", inventory_reserved=False, reserved_consumed_at=datetime.utcnow().isoformat() + "Z")
+    _order_log(order_id, "admin", "پرداخت تایید شد. سفارش وارد مرحله پردازش شد.")
+
+
+    # ✅ پاکسازی سشن کاربر (سبد و current_order_id) تا سفارش پرداخت‌شده در خرید بعدی تکرار نشود
+    _clear_user_cart_after_paid(context.application, order.get("user_id"))
+    admin_panel = admin_panel_keyboard(order_id)
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"🛠 کنترل سفارش {order_id}",
+        reply_markup=admin_panel
+    )
+
+
+
+    user_chat_id = order.get("user_chat_id")
+    try:
+        await context.bot.send_message(
+            chat_id=int(user_chat_id),
+            text=f"✅ پرداخت شما برای سفارش {order_id} تایید شد. سفارش شما در حال پردازش است.",
+            reply_markup=main_menu_reply()
+        )
+    except Exception as e:
+        logger.error("Failed to notify user for approve: %s", e)
+
+    await q.edit_message_caption(caption=(q.message.caption or "") + "\n\n✅ پرداخت تایید شد.", reply_markup=None)
+
+
+async def admin_reject_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
+    q = update.callback_query
+    await q.answer()
+
+    # 🔒 فقط ادمین‌های مجاز
+    if not _is_admin_activated(update):
+        await q.answer("دسترسی ندارید.", show_alert=True)
+        return
+
+
+    order = STORE.find_order(order_id)
+    if not order:
+        await q.edit_message_text("❌ سفارش پیدا نشد.")
+        return
+
+    # mark pending admin reply in bot_data (shared)
+    # mark pending admin reply in bot_data (per admin chat)
+    pend_map = context.bot_data.setdefault("admin_pending_reply", {})
+    pend_map[update.effective_chat.id] = {
+        "order_id": order_id,
+        "user_chat_id": order.get("user_chat_id"),
+    }
+    await q.edit_message_caption(
+        caption=(q.message.caption or "") + "\n\n❌ لطفاً دلیل/پیام را تایپ کنید تا برای مشتری ارسال شود.*",
+        reply_markup=q.message.reply_markup
+    )
+
+
+async def admin_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    دریافت متن از ادمین بعد از بعضی اکشن‌ها:
+      - وارد کردن کد رهگیری پست
+      - ارسال پیام به مشتری
+      - نوشتن دلیل رد رسید
+    (با پشتیبانی چند ادمین)
+    """
+    if not update.message:
+        return
+
+    # 🔒 فقط ادمین‌های مجاز
+    if not _is_admin_activated(update):
+        return
+
+    chat_id = update.effective_chat.id
+    text = (update.message.text or "").strip()
+    if not text:
+        return
+
+    # ---------------- tracking code flow ----------------
+    track_map = context.bot_data.get("admin_pending_tracking") or {}
+    pending_track = track_map.get(chat_id) if isinstance(track_map, dict) else None
+    if pending_track:
+        back_to = (pending_track or {}).get("back_to") or (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(chat_id), "admin:queue")
+        order_id = pending_track.get("order_id")
+        order = STORE.find_order(order_id) if order_id else None
+
+        if not order:
+            await update.message.reply_text("❌ سفارش پیدا نشد.")
+            try:
+                track_map.pop(chat_id, None)
+                if not track_map:
+                    context.bot_data.pop("admin_pending_tracking", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_tracking", None)
+            return
+
+        track = text
+
+        # ذخیره وضعیت ارسال
+        STORE.update_order(
+            order_id,
+            shipping_status="shipped",
+            tracking_code=track,
+            status="fulfilled",
+            fulfilled_at=datetime.utcnow().isoformat() + "Z"
+        )
+
+        _order_log(order_id, "admin", f"ارسال شد. کد رهگیری: {track}")
+
+        # ارسال پیام به مشتری
+        ok, mid, err = await _safe_send_message(
+            context,
+            chat_id=int(order["user_chat_id"]),
+            text=(
+                "🚚 سفارش شما ارسال شد.\n"
+                f"🧾 شماره سفارش: {order_id}\n"
+                f"🔎 کد رهگیری: {track}"
+            ),
+            reply_markup=main_menu_reply(),
+        )
+        if not ok:
+            # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+            base_id = context.bot_data.get(_admin_ui_key(chat_id))
+            await admin_ack_status(
+                context,
+                admin_chat_id=int(chat_id),
+                base_message_id=int(base_id) if base_id else None,
+                ok=False,
+                action="تحویل پست شد",
+                customer_msg_id=None,
+                err=err,
+            )
+            try:
+                track_map.pop(chat_id, None)
+                if not track_map:
+                    context.bot_data.pop("admin_pending_tracking", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_tracking", None)
+            return
+            try:
+                track_map.pop(chat_id, None)
+                if not track_map:
+                    context.bot_data.pop("admin_pending_tracking", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_tracking", None)
+            return
+
+        _order_log(order_id, "system", f"پیام ارسال+کد رهگیری به مشتری شد. msg_id={mid}")
+
+        # تایید به ادمین (آپدیت پنل واحد) + پاکسازی وضعیت انتظار
+        try:
+            # پیام راهنما و پیام ادمین را (در صورت امکان) پاک کن تا چت خلوت بماند
+            prompt_id = (pending_track or {}).get("prompt_msg_id")
+            if prompt_id:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=int(prompt_id))
+                except Exception:
+                    pass
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        order = STORE.find_order(order_id) or order
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="✅ تحویل پست شد و کد رهگیری برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال شد\n🆔 msg_id: " + str(mid) + "\n\n" + _admin_order_summary(order),
+            reply_markup=admin_order_keyboard(order_id, back_to=back_to),
+        )
+
+        # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+        base_id = context.bot_data.get(_admin_ui_key(chat_id))
+        await admin_ack_status(
+            context,
+            admin_chat_id=int(chat_id),
+            base_message_id=int(base_id) if base_id else None,
+            ok=True,
+            action="تحویل پست شد",
+            customer_msg_id=mid,
+            err=None,
+        )
+
+        try:
+            track_map.pop(chat_id, None)
+            if not track_map:
+                context.bot_data.pop("admin_pending_tracking", None)
+        except Exception:
+            context.bot_data.pop("admin_pending_tracking", None)
+        return
+
+    
+    # ---------------- shipped date filter flow ----------------
+    shipdate_map = context.bot_data.get("admin_pending_shipped_date") or {}
+    pending_shipdate = shipdate_map.get(chat_id) if isinstance(shipdate_map, dict) else None
+    if pending_shipdate:
+        target = _parse_admin_date_to_greg(text)
+        if not target:
+            await admin_ui_send_or_edit(
+                update,
+                context,
+                text="""❌ *فرمت تاریخ درست نیست.*
+مثال: 1404/10/14 یا 2026-01-04""",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⬅️ بازگشت", callback_data="admin:shipped")],
+                ]),
+                parse_mode="Markdown",
+            )
+            return
+
+        # clear pending
+        try:
+            shipdate_map.pop(chat_id, None)
+            if not shipdate_map:
+                context.bot_data.pop("admin_pending_shipped_date", None)
+        except Exception:
+            context.bot_data.pop("admin_pending_shipped_date", None)
+
+        await admin_shipped_show_date(update, context, target.isoformat())
+        return
+
+# ---------------- admin message flow ----------------
+    msg_map = context.bot_data.get("admin_pending_msg") or {}
+    pending_msg = msg_map.get(chat_id) if isinstance(msg_map, dict) else None
+    if pending_msg:
+        back_to = (pending_msg or {}).get("back_to") or (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(chat_id), "admin:queue")
+        order_id = pending_msg.get("order_id")
+        order = STORE.find_order(order_id) if order_id else None
+
+        if not order:
+            await update.message.reply_text("❌ سفارش پیدا نشد.")
+            try:
+                msg_map.pop(chat_id, None)
+                if not msg_map:
+                    context.bot_data.pop("admin_pending_msg", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_msg", None)
+            return
+
+        msg = text
+        _order_log(order_id, "admin", f"پیام ادمین به مشتری: {msg}")
+
+        # ارسال پیام واقعی به مشتری
+        ok, mid, err = await _safe_send_message(
+            context,
+            chat_id=int(order["user_chat_id"]),
+            text=f"✉️ پیام پشتیبانی درباره سفارش {order_id}:\n{msg}",
+            reply_markup=main_menu_reply(),
+        )
+        if not ok:
+            # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+            base_id = context.bot_data.get(_admin_ui_key(chat_id))
+            await admin_ack_status(
+                context,
+                admin_chat_id=int(chat_id),
+                base_message_id=int(base_id) if base_id else None,
+                ok=False,
+                action="پیام به مشتری",
+                customer_msg_id=None,
+                err=err,
+            )
+            try:
+                msg_map.pop(chat_id, None)
+                if not msg_map:
+                    context.bot_data.pop("admin_pending_msg", None)
+            except Exception:
+                context.bot_data.pop("admin_pending_msg", None)
+            return
+
+        _order_log(order_id, "system", f"پیام ادمین به مشتری ارسال شد. msg_id={mid}")
+
+        # تایید به ادمین (آپدیت پنل واحد) + پاکسازی وضعیت انتظار
+        try:
+            prompt_id = (pending_msg or {}).get("prompt_msg_id")
+            if prompt_id:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=int(prompt_id))
+                except Exception:
+                    pass
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=update.message.message_id)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        order = STORE.find_order(order_id) or order
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="✅ پیام برای مشتری ارسال شد.\n🟢 پیام به مشتری ارسال\n🆔 msg_id: " + str(mid) + "\n\n" + _admin_order_summary(order),
+            reply_markup=admin_order_keyboard(order_id, back_to=back_to),
+        )
+
+        # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+        base_id = context.bot_data.get(_admin_ui_key(chat_id))
+        await admin_ack_status(
+            context,
+            admin_chat_id=int(chat_id),
+            base_message_id=int(base_id) if base_id else None,
+            ok=True,
+            action="پیام به مشتری",
+            customer_msg_id=mid,
+            err=None,
+        )
+
+        try:
+            msg_map.pop(chat_id, None)
+            if not msg_map:
+                context.bot_data.pop("admin_pending_msg", None)
+        except Exception:
+            context.bot_data.pop("admin_pending_msg", None)
+        return
+
+    # ---------------- receipt reject reason flow ----------------
+    reply_map = context.bot_data.get("admin_pending_reply") or {}
+    pending = reply_map.get(chat_id) if isinstance(reply_map, dict) else None
+    if not pending:
+        return
+
+    msg = text
+    order_id = pending.get("order_id")
+    user_chat_id = pending.get("user_chat_id")
+    if not (order_id and user_chat_id):
+        try:
+            reply_map.pop(chat_id, None)
+            if not reply_map:
+                context.bot_data.pop("admin_pending_reply", None)
+        except Exception:
+            context.bot_data.pop("admin_pending_reply", None)
+        return
+
+    # update order status
+    STORE.update_order(order_id, status="receipt_rejected", rejected_at=datetime.utcnow().isoformat() + "Z", reject_message=msg)
+    _release_inventory_for_order(order_id, reason="رسید رد شد و رزرو آزاد گردید.")
+
+    try:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📸 ارسال مجدد رسید", callback_data=f"receipt:start:{order_id}")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+        ])
+
+        await context.bot.send_message(
+            chat_id=int(user_chat_id),
+            text=(
+                f"❌ رسید پرداخت برای سفارش {order_id} تایید نشد.\n\n"
+                f"پیام ادمین: {msg}\n\n"
+                "لطفاً روی «ارسال مجدد رسید» بزن و دوباره عکس رسید را ارسال کن."
+            ),
+            reply_markup=kb
+        )
+    except Exception as e:
+        logger.error("Failed to send reject message to user: %s", e)
+
+    await update.message.reply_text("✅ پیام برای مشتری ارسال شد.")
+    try:
+        reply_map.pop(chat_id, None)
+        if not reply_map:
+            context.bot_data.pop("admin_pending_reply", None)
+    except Exception:
+        context.bot_data.pop("admin_pending_reply", None)
+
+
+# ------------------ end manual payment / receipt workflow ------------------
+
+#      payment_provider
+class DummyProvider:
+    def create_payment(self , order_id:str , amount: int, name: str, phone: str, desc: str, callback_url: Optional[str] = None):
+        link = link = f"https://example.com/pay?order_id={order_id}&amount={amount}"
+        return {"ok": True, "payment_id": f"dummy-{order_id}", "link": link, "raw": {"provider": "dummy"}}
+    
+    def verify_payment(self, order_id: str, payment_id: str):
+        return {"ok": True, "status": "paid", "track_id": f"FAKE-{order_id}", "raw": {}}
+
+
+class IdPayProvider:
+    def __init__(self, api_key: str, sandbox: bool = True):
+        self.api_key = api_key
+        self.sandbox = sandbox
+        self.create_url = "https://api.idpay.ir/v1.1/payment"
+        self.verify_url = "https://api.idpay.ir/v1.1/payment/verify"
+
+    def _headers(self):
+        return {
+            "X-API-KEY": self.api_key,
+            "X-SANDBOX": "1" if self.sandbox else "0",
+            "Content-Type": "application/json",
+        }
+    
+    def create_payment(self, order_id: str, amount: int, name: str, phone: str, desc: str, callback_url: Optional[str] = None):
+        payload = {
+            "order_id": order_id,
+            "amount": amount,
+            "name": name,
+            "phone": phone,
+            "desc": desc[:200],
+        }
+        if callback_url:
+            payload["callback"] = callback_url
+        r = requests.post(self.create_url, headers=self._headers(), json=payload, timeout=20)
+        try:
+            j = r.json()
+        except Exception:
+            j = {"error": r.text}
+        link = j.get("link")
+        pid = j.get("id")
+        ok = bool(link and pid)
+        return {"ok": ok, "payment_id": pid, "link": link, "raw": j}
+    
+    def verify_payment(self, order_id: str, payment_id: str):
+        payload = {"id": payment_id, "order_id": order_id}
+        r = requests.post(self.verify_url, headers=self._headers(), json=payload, timeout=20)
+        try:
+            j = r.json()
+        except Exception:
+            j = {"error": r.text}
+        status = j.get("status")
+        ok = status in (100, 101)
+        track_id = j.get("track_id") or j.get("payment", {}).get("track_id")
+        return {"ok": ok, "status": status, "track_id": track_id, "raw": j}
+
+
+def get_payment_provider():
+    provider_name = (os.getenv("PAYMENT_PROVIDER", "idpay") or "idpay").lower()
+    if provider_name == "idpay" and os.getenv("IDPAY_API_KEY", "").strip():
+        return IdPayProvider(
+            api_key=os.getenv("IDPAY_API_KEY").strip(),
+            sandbox=(os.getenv("IDPAY_SANDBOX", "1").strip() == "1")
+        )
+    return DummyProvider()
+PAY = get_payment_provider()
+CALLBACK_URL = os.getenv("CALLBACK_URL", "").strip() or None
+
+
+#      check out: pay/verify
+
+async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    customer = context.user_data.get("customer", {})
+    if not customer or not customer.get("shipping_method"):
+        # کاربر هنوز روش ارسال را انتخاب نکرده
+        await q.answer("ابتدا روش ارسال را انتخاب کنید.", show_alert=True)
+        text = _build_checkout_summary_text(context)
+        try:
+            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(None))
+        except Exception:
+            pass
+        return
+
+
+    # پاکسازی رزروهای منقضی شده (جلوگیری از قفل شدن موجودی)
+    _cleanup_expired_reservations()
+
+    order_id = _create_order_from_current_cart(update, context)
+    if not order_id:
+        await q.edit_message_text("❌ سبد خرید یا مشخصات مشتری کامل نیست. لطفاً دوباره تلاش کنید.", reply_markup=main_menu())
+        return
+
+    # ذخیره سفارش فعال برای لغو احتمالی
+    context.user_data["active_order_id"] = order_id
+
+    # رزرو موجودی قبل از ارسال کاربر به مرحله پرداخت/ارسال رسید
+    ok = _reserve_inventory_for_order(order_id)
+    if not ok:
+        # سفارش ساخته شده ولی موجودی کافی نیست؛ کنسل و اطلاع‌رسانی
+        STORE.update_order(order_id, status="cancelled", cancel_reason="out_of_stock")
+        context.user_data.pop("active_order_id", None)
+        await q.edit_message_text("❌ متأسفانه موجودی برخی اقلام تمام شد. لطفاً سبد خرید را بررسی کنید.", reply_markup=main_menu())
+        return
+
+    await manual_payment_instructions(update, context, order_id)
+
+
+async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
+    q = update.callback_query
+    await q.answer()
+
+    order = STORE.find_order(order_id)
+    if not order:
+        await q.edit_message_text("سفارش پیدا نشد.", reply_markup=main_menu())
+        return
+    if order.get("status") in ("paid", "fulfilled"):
+        await q.edit_message_text("این سفارش قبلاً پرداخت/تایید شده است. 🙌", reply_markup=main_menu())
+        return
+    
+    payment_id = order.get("payment", {}).get("payment_id")
+    if not payment_id:
+        await q.edit_message_text("شناسه پرداخت نامشخص است.", reply_markup=main_menu())
+        return
+    
+    res = PAY.verify_payment(order_id, payment_id)
+    if not res.get("ok"):
+        await q.edit_message_text("پرداخت هنوز تایید نشده یا ناموفق بوده است.", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔁 بررسی مجدد", callback_data=f"checkout:verify:{order_id}")],
+            [InlineKeyboardButton("🏠 منو", callback_data="menu:back_home")],
+        ]))
+        logger.warning("Payment verify not ok: %s", res)
+        return
+    
+    # موجودی قبلاً در مرحله checkout_pay رزرو شده است؛ اینجا دیگر از موجودی کم نمی‌کنیم.
+    STORE.update_order(
+        order_id,
+        status="paid",
+        paid_at=datetime.utcnow().isoformat() + "Z",
+        inventory_reserved=False,
+        reserved_consumed_at=datetime.utcnow().isoformat() + "Z",
+        payment={**order["payment"], "verify_raw": res.get("raw"), "track_id": res.get("track_id")}
+    )
+
+    context.user_data["cart"] = []
+    context.user_data.pop("active_order_id", None)
+
+    await q.edit_message_text(
+        f"🎉 پرداخت با موفقیت انجام شد!\nشماره سفارش: {order_id}\n"
+        f"کد رهگیری پرداخت: {res.get('track_id') or '—'}\n"
+        f"مبلغ: {_ftm_toman(order['total'])}\n\n"
+        "سفارش شما برای پردازش به ادمین ارسال شد.",
+        reply_markup=main_menu()
+    )
+
+    if _has_admin_chat():
+        lines = []
+        for i, it in enumerate(order["items"], 1):
+            lines.append(
+                f"{i}) {it['name']} | رنگ: {it.get('color') or '—'} | سایز: {it.get('size') or '—'} | "
+                f"تعداد: {it['qty']} | قیمت واحد: {_ftm_toman(it['price'])}"
+            )
+        
+        msg = (
+            f"📦 سفارش جدید پرداخت‌شده\n"
+            f"OrderID: {order_id}\n"
+            f"User: @{update.effective_user.username or update.effective_user.id}\n"
+            f"جمع کل: {_ftm_toman(order['total'])}\n"
+            f"رهگیری پرداخت: {res.get('track_id') or '—'}\n\n"
+            "اقلام:\n" + "\n".join(lines) + "\n\n"
+            "👤 مشتری:\n"
+            f"نام: {order['customer'].get('name')}\n"
+            f"موبایل: {order['customer'].get('phone')}\n"
+            f"آدرس: {order['customer'].get('address')}\n"
+            f"کدپستی: {order['customer'].get('postal')}\n"
+        )
+        try:
+            await _broadcast_admin_message(context, msg)
+        except Exception as e:
+            logger.error("Failed to notify admin: %s", e)
+        
+async def show_home_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = "🏠 منوی اصلی\nاز گزینه‌های زیر انتخاب کنید:"
+
+    if update.callback_query:
+        q = update.callback_query
+        await q.answer()
+        # پیام فعلی (Inline) را تبدیل به منو کن
+        try:
+            await q.edit_message_text(text, reply_markup=main_menu())
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=main_menu())
+
+        # اگر می‌خوای کیبورد پایین صفحه (ReplyKeyboard) هم حتماً دیده بشه:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⬇️ از منوی پایین هم می‌تونی استفاده کنی.",
+            reply_markup=main_menu_reply(is_admin=_is_admin_activated(update))
+        )
+    else:
+        await update.message.reply_text(text, reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
+
+#      روتر کلی دکمه ها 
+async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None :
+    q = update.callback_query
+    data = (q.data or "").strip()
+
+
+
+    # 🔒 دسترسی به callback های ادمین
+    if (data.startswith("admin:") or data.startswith("ship:")) and not _is_admin_activated(update):
+        await q.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
+
+    if data == "admin:dashboard":
+        await admin_dashboard(update, context)
+        return
+
+    if data.startswith("admin:dashboard:"):
+        # admin:dashboard:today|week|month
+        period = data.split("admin:dashboard:", 1)[1].strip()
+        if period in ("today", "week", "month"):
+            await admin_dashboard_show_period(update, context, period)
+        else:
+            await admin_dashboard(update, context)
+        return
+
+    if data == "admin:queue":
+        await admin_queue_show(update, context)
+        return
+
+    
+    if data == "admin:shipped":
+        await admin_shipped_show(update, context)
+        return
+
+    if data.startswith("admin:shipped:date:"):
+        # admin:shipped:date:YYYY-MM-DD
+        try:
+            date_iso = data.split("admin:shipped:date:", 1)[1]
+        except Exception:
+            date_iso = ""
+        await admin_shipped_show_date(update, context, date_iso)
+        return
+
+    if data == "admin:shipped:enter_date":
+        # ask admin to type date (message will be captured by admin_text_reply)
+        try:
+            m = context.bot_data.setdefault("admin_pending_shipped_date", {})
+            m[int(update.effective_chat.id)] = {"kind": "shipped_date"}
+        except Exception:
+            context.bot_data["admin_pending_shipped_date"] = {int(update.effective_chat.id): {"kind": "shipped_date"}}
+
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="""📅 *تاریخ را وارد کنید*
+فرمت‌های قابل قبول:
+• 1404/10/14 (شمسی)
+• 2026-01-04 (میلادی)
+
+بعد از ارسال، همانجا لیست سفارش‌های ارسال‌شده‌ی آن تاریخ نمایش داده می‌شود.""",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ بازگشت", callback_data="admin:shipped")],
+            ]),
+            parse_mode="Markdown",
+        )
+        return
+
+    if data.startswith("admin:open:"):
+        # admin:open:<list_tag>:<order_id>
+        _, _, list_tag, order_id = data.split(":", 3)
+
+        if list_tag == "ready":
+            back_to = "admin:queue"
+        else:
+            # اگر ادمین از نمای تاریخِ ارسال‌شده‌ها آمده باشد، همانجا برگردد
+            try:
+                back_to = (context.bot_data.get("admin_current_shipped_back", {}) or {}).get(
+                    int(update.effective_chat.id),
+                    "admin:shipped",
+                )
+            except Exception:
+                back_to = "admin:shipped"
+
+        await admin_open_order(update, context, order_id, back_to=back_to)
+        return
+
+
+    logger.info(f"Received callback data: {data}")
+    logger.info(f"CATEGORY_MAP: {CATEGORY_MAP}")
+
+    if data == "menu:back_home":
+        await show_home_menu(update, context)
+        return
+        
+    if data == "menu:products":
+        await show_gender(update , context) ; return
+    
+    if data == "menu:cart":
+        await show_cart(update , context) ; return
+
+    if data == "menu:support":
+        await q.edit_message_text(" پشتیبانی: @amirmehdi_84_10", reply_markup=main_menu()) ; return
+        
+    
+
+    
+    # ---- shipping method callbacks ----
+    if data == "shipmethod:choose":
+        customer = context.user_data.get("customer", {})
+        selected = customer.get("shipping_method")
+        text = _build_checkout_summary_text(context)
+        try:
+            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(selected))
+        except Exception:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=shipping_methods_keyboard(selected))
+        return
+    
+    if data.startswith("shipmethod:set:"):
+        _, _, method = data.split(":", 2)
+        if method not in SHIPPING_METHODS:
+            await q.answer("روش ارسال نامعتبر است.", show_alert=True)
+            return
+        context.user_data.setdefault("customer", {})["shipping_method"] = method
+        # ✅ اگر سفارش قبلاً ساخته شده، روش ارسال داخل ORDER هم آپدیت شود
+        existing = context.user_data.get("current_order_id")
+        if existing and STORE.find_order(existing):
+            order = STORE.find_order(existing)
+            new_customer = dict(order.get("customer", {}))
+            new_customer["shipping_method"] = method
+            STORE.update_order(existing, shipping_method=method, customer=new_customer)
+
+        text = _build_checkout_summary_text(context)
+        # برگشت به خلاصه سفارش با کیبورد اصلی همان مرحله
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
+            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
+            [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
+            [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ])
+        await q.edit_message_text(text, reply_markup=kb)
+        await q.answer("روش ارسال ثبت شد ✅", show_alert=False)
+        info = SHIPPING_INFO.get(method, "هزینه ارسال بر عهده مشتری است.")
+        await q.answer(info, show_alert=True)
+        return
+    
+    if data == "shipmethod:back":
+        text = _build_checkout_summary_text(context)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
+            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
+            [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
+            [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ])
+        await q.edit_message_text(text, reply_markup=kb)
+        return
+    # ---- end shipping method callbacks ----
+    
+# ---- manual payment / receipt callbacks ----
+    if data.startswith("receipt:start:"):
+        _, _, order_id = data.split(":", 2)
+        await receipt_start(update, context, order_id)
+        return
+
+    if data == "receipt:cancel":
+        await receipt_cancel(update, context)
+        return
+
+    if data.startswith("admin:approve:"):
+        _, _, order_id = data.split(":", 2)
+        await admin_approve(update, context, order_id)
+        return
+
+    if data.startswith("admin:reject:"):
+        _, _, order_id = data.split(":", 2)
+        await admin_reject_start(update, context, order_id)
+        return
+    # ---- end manual payment / receipt callbacks ----
+
+
+# **[تغییر]** شروع بخش هندلرهای سبد خرید
+    # ------------------ مدیریت سبد خرید ------------------
+    cart: List[Dict] = context.user_data.get("cart" , [])
+    
+    # ... هندلرهای cart:plus و cart:minus بدون تغییر نسبت به اصلاحیه قبلی ...
+
+    if data.startswith("cart:plus:"):
+        _, _, index_str = data.split(":", 2)
+        try:
+            index = int(index_str)
+            if 0 <= index < len(cart):
+                item = cart[index]
+                # ⭐️ (جدید) بررسی موجودی ⭐️
+                max_qty = _get_item_inventory(item)
+                
+                if item["qty"] + 1 <= max_qty:
+                    if _update_cart_item_qty(cart, index, 1):
+                        await show_cart(update, context)
+                    else:
+                        await q.answer("❌ خطای افزایش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
+                else:
+                    # ⭐️ (جدید) نمایش پیام محدودیت موجودی ⭐️
+                    await q.answer(
+                        f"❌ متأسفانه موجودی این کالا ({item['name']}) فقط {max_qty} عدد است و شما {item['qty']} عدد در سبد دارید.", 
+                        show_alert=True
+                    )
+            else:
+                await q.answer("❌ خطای افزایش تعداد. (آیتم نامعتبر)", show_alert=True)
+        except Exception:
+            await q.answer("❌ خطای افزایش تعداد.", show_alert=True)
+        return
+        
+    if data.startswith("cart:minus:"):
+        _, _, index_str = data.split(":", 2)
+        try:
+            index = int(index_str)
+            # توجه: اگر تعداد صفر شود، آیتم به طور خودکار حذف می‌شود.
+            if _update_cart_item_qty(cart, index, -1):
+                await show_cart(update, context)
+            else:
+                await q.answer("❌ خطای کاهش تعداد. (شاید آیتم پیدا نشد)", show_alert=True)
+        except Exception:
+            await q.answer("❌ خطای کاهش تعداد.", show_alert=True)
+        return
+    
+    if data == "none":
+        await q.answer("این دکمه فقط تعداد فعلی/موجودی را نشان می‌دهد." , show_alert=False) ; return 
+        
+    # ------------------ پایان بخش هندلرهای سبد خرید ------------------
+    
+    if data.startswith("catalog:gender:"):
+        _, _, gender = data.split(":" , 2)
+        await show_categories(update , context , gender) ; return
+        
+    if data.startswith("catalog:category:"):
+        parts = data.split(":" , 3)
+        _, _, gender , category_safe = parts
+        category = CATEGORY_MAP.get(category_safe , category_safe)
+        await show_products(update , context , gender , category) ; return
+    
+    if data.startswith("catalog:select:"):
+        _, _, gender, category_safe, product_id = data.split(":", 4)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
+        product = _find_product(gender , category , product_id)
+        if product and "variants" in product:
+            await ask_color_and_size(update, context, gender, category, product_id)
+        else:
+            await ask_size_only(update , context , gender , category , product_id)
+        return
+        
+    
+    if data.startswith("catalog:sizeonly:"):
+        _, _, gender, category_safe, product_id = data.split(":", 4)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
+        await ask_size_only(update, context, gender, category, product_id) ; return
+        
+    
+    if data.startswith("catalog:chooseonly:"):
+        _, _, gender, category_safe , product_id, size = data.split(":", 5)
+        category = CATEGORY_MAP.get(category_safe , category_safe)
+        # برای محصولات بدون رنگ، باید قیمت و موجودی را از خود محصول بگیریم
+        p = _find_product(gender, category, product_id)
+        if not p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+            
+        context.user_data["pending"] = {
+            "gender": gender,
+            "category": category,
+            "product_id": product_id,
+            "name": p["name"],
+            "size": size,
+            "price": p["price"],
+        }
+        await show_qty_picker(update, context, size) ; return
+
+
+    if data.startswith("ship:packed:"):
+        _, _, order_id = data.split(":", 2)
+        order = STORE.find_order(order_id)
+        if not order:
+            await q.answer("سفارش پیدا نشد", show_alert=True)
+            return
+
+        STORE.update_order(order_id, shipping_status="packed")
+        _order_log(order_id, "admin", "بسته‌بندی شد.")
+
+        # پیام به مشتری (تحویل به تلگرام)
+        ok, mid, err = await _safe_send_message(
+            context,
+            chat_id=int(order["user_chat_id"]),
+            text=f"📦 سفارش {order_id} بسته‌بندی شد و به‌زودی ارسال می‌شود.",
+            reply_markup=main_menu_reply(),
+        )
+        if ok:
+            _order_log(order_id, "system", f"پیام بسته‌بندی به مشتری ارسال شد. msg_id={mid}")
+            user_send_note = f"🟢 پیام به مشتری ارسال شد (تحویل تلگرام)\n🆔 msg_id: {mid}"
+        else:
+            _order_log(order_id, "system", f"ارسال پیام بسته‌بندی به مشتری ناموفق بود. err={err}")
+            user_send_note = "🔴 ارسال پیام به مشتری ناموفق بود (خطای تلگرام/مسدود بودن ربات)."
+
+        # ✅ آپدیت پنل واحد ادمین (بدون شلوغ‌کاری)
+        order = STORE.find_order(order_id) or order
+        back_to = (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue")
+        await admin_ui_send_or_edit(
+            update,
+            context,
+            text="✅ وضعیت سفارش بروزرسانی شد: *بسته‌بندی شد*\n" + user_send_note + "\n\n" + _admin_order_summary(order),
+            reply_markup=admin_order_keyboard(order_id, back_to=back_to),
+        )
+
+        # ✅ پیام وضعیت برای ادمین (Reply زیر پنل)
+        base_id = context.bot_data.get(_admin_ui_key(update.effective_chat.id))
+        await admin_ack_status(
+            context,
+            admin_chat_id=int(update.effective_chat.id),
+            base_message_id=int(base_id) if base_id else None,
+            ok=ok,
+            action="بسته‌بندی شد",
+            customer_msg_id=mid if ok else None,
+            err=err if not ok else None,
+        )
+
+        await q.answer("ثبت شد ✅")
+        return
+
+    
+    if data.startswith("ship:need_track:"):
+        _, _, order_id = data.split(":", 2)
+        # ذخیره سفارش در وضعیت انتظار کد رهگیری (برای همین چت ادمین)
+        pending = context.bot_data.setdefault("admin_pending_tracking", {})
+        sent = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🔎 لطفاً کد رهگیری پست را تایپ کنید:"
+        )
+        pending[update.effective_chat.id] = {
+            "order_id": order_id,
+            "prompt_msg_id": sent.message_id,
+            "back_to": (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue"),
+        }
+        await q.answer("منتظر کد رهگیری…", show_alert=False)
+        return
+
+    
+    if data.startswith("admin:msg:"):
+        _, _, order_id = data.split(":", 2)
+        pending = context.bot_data.setdefault("admin_pending_msg", {})
+        sent = await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="✉️ لطفاً پیام را تایپ کنید تا برای مشتری ارسال شود:"
+        )
+        pending[update.effective_chat.id] = {
+            "order_id": order_id,
+            "prompt_msg_id": sent.message_id,
+            "back_to": (context.bot_data.get("admin_last_back_to", {}) or {}).get(int(update.effective_chat.id), "admin:queue"),
+        }
+
+        await q.answer("منتظر پیام…", show_alert=False)
+        return
+
+    
+    
+    if data.startswith("catalog:choose:"):
+        parts = data.split(":", 6)
+        if len(parts) != 7:
+            await q.edit_message_text("داده انتخاب محصول ناقص است.", reply_markup=main_menu())
+            return
+        _, _, gender, category_safe, product_id, color_index_str, size = parts
+        category = CATEGORY_MAP.get(category_safe, category_safe)
+    
+        p = _find_product(gender, category, product_id)
+        if not p or "variants" not in p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+    
+        try:
+            color_index = int(color_index_str)
+            colors = list(p["variants"].keys())
+            if color_index < 0 or color_index >= len(colors):
+                raise ValueError("Invalid color index")
+            color = colors[color_index]
+        except (ValueError, IndexError):
+            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            return
+    
+        await show_qty_picker_combined(update, context, gender, category, product_id, color, size)
+        return
+        
+       
+    # این بخش برای یک روال قدیمی‌تر است که در ask_color_and_size کنونی استفاده نمی‌شود
+    if data.startswith("catalog:color:"):
+        _, _, gender, category_safe, product_id, color_safe = data.split(":", 5)
+        category = CATEGORY_MAP.get(category_safe, category_safe)
+    
+        p = _find_product(gender, category, product_id)
+        if not p or "variants" not in p:
+            await q.edit_message_text("محصول پیدا نشد.", reply_markup=main_menu())
+            return
+    
+        color = _unsafe_color(color_safe, p["variants"])
+        if not color:
+            await q.edit_message_text("رنگ انتخابی معتبر نیست.", reply_markup=main_menu())
+            return
+    
+        await after_color_ask_size(update, context, gender, category, product_id, color)
+        return
+        
+    if data.startswith("catalog:size:"):
+        _, _, chosen_size = data.split(":" , 2)
+        await show_qty_picker(update, context, chosen_size) ; return
+        
+    
+
+    if data == "qty:inc":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True)
+            return
+        if pend["qty"] < pend["available"]:
+            pend["qty"] += 1
+        else:
+            await q.answer("به حداکثر موجودی فروشگاه رسیدی" , show_alert=False)
+        
+        cap = (
+            f"{pend['name']}"
+            f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
+            f"\nموجودی:{pend['available']}"
+            f"\nقیمت واحد : {_ftm_toman(pend['price'])}"
+            f"\nقیمت نهایی: {_ftm_toman(pend['price'] * pend['qty'])}"
+        )
+        try:
+            # سعی در ویرایش کپشن (اگر پیام قبلی عکس‌دار باشد)
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        except Exception:
+            # اگر نشد، پیام را به صورت متنی ویرایش کن
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        return
+    
+    
+    if data == "qty:dec":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
+        if pend["qty"] > 1 :
+            pend["qty"] -= 1
+        else:
+            await q.answer("حداقل تعداد 1 است ", show_alert=False)
+        cap = (
+            f"{pend['name']}"
+            f"\nرنگ:{pend.get('color') or '—'} | سایز : {pend['size']}"
+            f"\nموجودی:{pend['available']}"
+            f"\nقیمت واحد:{_ftm_toman(pend['price'])}"
+            f"\nقیمت نهایی:{_ftm_toman(pend['price'] * pend['qty'])}"
+        )
+        try:
+            await q.edit_message_caption(caption=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        except Exception:
+            await q.edit_message_text(text=cap, reply_markup=qty_keyboard(pend["qty"], pend["available"]))
+        return
+    
+    if data == "qty:add":
+        pend = context.user_data.get("pending")
+        if not pend:
+            await q.answer("خطا در انجام عملیات" , show_alert=True) ; return
+        item = {
+            "product_id" : pend["product_id"] ,
+            "gender" : pend["gender"] , 
+            "category" : pend["category"] , 
+            "name" : pend["name"] , 
+            "color" : pend.get("color") , 
+            "size" : pend.get("size") , 
+            "qty" : pend["qty"] , 
+            "price" : pend["price"] ,  
+        }
+        cart = context.user_data.setdefault("cart" , [])
+        _merge_cart_item(cart , item)
+        context.user_data.pop("pending" , None)
+
+        # 🟢 تغییر: افزودن پیام هشدار (درخواستی کاربر)
+        warning_message = (
+            "✅ مشتری گرامی، **کالا مورد نظر به سبد خرید شما اضافه شده**.\n\n"
+            "⚠️ **لطفاً توجه داشته باشید** که تا پرداخت نهایی، کالا متعلق به شما نمی‌باشد و "
+            "اگر مشتری دیگری زودتر پرداخت را انجام دهد، متأسفانه کالا برای ایشان ثبت می‌شود و "
+            "گاهی ممکن است همان لحظه موجودی فروشگاه تمام شود.\n\n"
+            "با تشکر، مدیریت فروشگاه ..."
+        )
+        
+        await context.bot.send_message(
+            chat_id=q.message.chat_id,
+            text=warning_message)
+        # ----------------------------------------------------
+
+        txt = "می‌تونی به خرید ادامه بدی یا سبد خرید رو مشاهده کنی"
+        await q.message.reply_text(
+            txt,
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛒 مشاهده سبد", callback_data="menu:cart")], 
+                [InlineKeyboardButton("🛍️ ادامه خرید", callback_data="menu:products")],
+            ])
+        )
+        return
+
+    if data == "qty:noop":
+        await q.answer("---" , show_alert=False) ; return
+    
+
+    
+    if data == "flow:cancel":
+        """
+        انصراف از جریان انتخاب محصول (سایز/تعداد).
+        خواستهٔ شما: پیام انتخاب محصول/تعداد (همین پیام فعلی) پاک شود و سپس صفحهٔ قبلی نمایش داده شود.
+        """
+        pend = context.user_data.get("pending") or {}
+        gender = pend.get("gender")
+        category = pend.get("category")
+
+        # پاکسازی وضعیت انتخاب فعلی
+        context.user_data.pop("pending", None)
+        context.user_data["awaiting"] = None
+
+        # ✅ پاک کردن پیام فعلی (پیام محصول/انتخاب سایز/تعداد)
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.callback_query.message.message_id)
+        except Exception:
+            pass
+
+        # برگشت به مرحله مناسب
+        if gender and category:
+            await show_products(update, context, gender, category)
+        else:
+            await show_cart(update, context)
+        return
+
+
+    # checkout:begin توسط ConversationHandler در entry_points مدیریت می‌شود.
+    # اگر این کد اجرا شود، یعنی ConversationHandler موفق به آغاز نشده است.
+    if data == "checkout:begin":
+        await q.answer("❌ خطا در اجرای فرم. لطفاً یک بار دیگر تلاش کنید.", show_alert=True)
+        await show_cart(update, context)
+        return
+    
+
+    if data == "checkout:pay":
+        await checkout_pay(update , context) ; return
+    
+    # نیاز به هندلر برای لغو سفارش
+    if data == "checkout:cancel":
+        oid = context.user_data.get("active_order_id") or context.user_data.get("awaiting_receipt")
+        if oid:
+            _release_inventory_for_order(oid, reason="کاربر سفارش را لغو کرد و رزرو آزاد شد.")
+            STORE.update_order(oid, status="cancelled", cancel_reason="user_cancelled")
+
+        context.user_data.pop("active_order_id", None)
+        context.user_data.pop("awaiting_receipt", None)
+        context.user_data.pop("cart" , None)
+        context.user_data.pop("customer" , None)
+        context.user_data.pop("pending" , None)
+        context.user_data['awaiting'] = None
+        await q.edit_message_text("❌ سفارش لغو شد. سبد خرید خالی شد.", reply_markup=main_menu())
+
+# ✅ بازگرداندن منوی اصلی (Reply Keyboard)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="از منوی پایین می‌تونی ادامه بدی.",
+            reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)),
+        )
+        return
+
+    if data.startswith("checkout:verify:"):
+        _, _, order_id = data.split(":", 2)
+        await checkout_verify(update, context, order_id); return
+    
+
+    await q.edit_message_text("❌ گزینه نامعتبر.", reply_markup=main_menu())
+
+
+#        /start و اجرای برنامه
+# ساخت اپلیکیشن PTB
+application = Application.builder().token(BOT_TOKEN).build()
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("admin", admin_register))
+application.add_handler(CommandHandler("unadmin", admin_unregister))
+application.add_handler(CommandHandler("myid", my_id))
+application.add_handler(CommandHandler("dashboard", admin_dashboard))
+application.add_handler(CommandHandler("sales", admin_dashboard))
+
+# Conversation Handler برای فرم مشتری
+conv_handler = ConversationHandler(
+    # ⭐️ (اصلاح) entry_points: شروع مکالمه با زدن دکمه "ثبت سفارش و پرداخت" یا "ویرایش مشخصات" ⭐️
+    entry_points=[CallbackQueryHandler(begin_customer_form, pattern=r"^checkout:begin$")],
+    states={
+        CUSTOMER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
+        CUSTOMER_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text), MessageHandler(filters.CONTACT, on_contact)],
+        CUSTOMER_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
+        CUSTOMER_POSTAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
+    },
+    # ⭐️ fallbacks: بازگشت به سبد خرید در صورت انصراف ⭐️
+    fallbacks=[CallbackQueryHandler(menu_router, pattern=r"^flow:cancel$")]
+)
+application.add_handler(conv_handler)
+
+
+# هندلرهای اصلی (بعد از Conversation Handler)
+application.add_handler(CallbackQueryHandler(menu_router))
+
+# Receipt photo handler (user uploads)
+application.add_handler(MessageHandler(filters.PHOTO, on_receipt_photo))
+
+# Admin text reply handler (when admin writes a reason for rejection)
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_text_reply),group=1)
+
+# هندلر برای Reply Keyboard (منوهای پایین صفحه)
+menu_reply_handler = MessageHandler(
+    filters.TEXT & ~filters.COMMAND,
+    menu_reply_router
+)
+application.add_handler(menu_reply_handler)
+
+
+# اجرای event loop در پس‌زمینه
+LOOP = asyncio.new_event_loop()
+def _run_loop_forever():
+    asyncio.set_event_loop(LOOP)
+    LOOP.run_forever()
+threading.Thread(target=_run_loop_forever, daemon=True).start()
+
+# ست کردن webhook
+RENDER_HOST = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+WEBHOOK_URL = f"https://{RENDER_HOST}/webhook/{BOT_TOKEN}"
+
+async def _ptb_init_and_webhook():
+    try:
+        await application.initialize()
+        await application.start()
+        await application.bot.set_webhook(
+            url=WEBHOOK_URL,
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+        )
+        logger.info(f"Webhook set to: {WEBHOOK_URL}")
+    except Exception as e:
+        logger.error("Failed to set webhook: %s", e)
+        
+# اجرای تنظیمات PTB در لوپ اصلی
+asyncio.run_coroutine_threadsafe(_ptb_init_and_webhook(), LOOP)
+
+# Flask app
+flask_app = Flask(__name__)
+
+@flask_app.route("/", methods=["GET", "HEAD"])
+def health():
+    return "Bot is running", 200
+
+@flask_app.post(f"/webhook/{BOT_TOKEN}")
+def telegram_webhook():
+    try:
+        data = request.get_json(force=True)
+        # استفاده از application.update_queue.put_nowait برای فرستادن آپدیت به لوپ PTB
+        # تا از خطا در thread اصلی وب‌هو‌ک جلوگیری شود.
+        logger.info("Received Update JSON: %s", data)
+        update = Update.de_json(data, application.bot)
+        asyncio.run_coroutine_threadsafe(application.process_update(update), LOOP) 
+        return "OK", 200
+    except Exception as e:
+        logger.exception("webhook handler error: %s", e)
+        return "ERROR", 500
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "10000"))
+    # اگر در محیط رندر هستید، فلش اپ را با هاست 0.0.0.0 و پورت مشخص شده اجرا کنید
+    # در غیر این صورت، می‌توانید برای تست لوکال از حالت debug=True استفاده کنید.
+    flask_app.run(host="0.0.0.0", port=port, debug=False)
