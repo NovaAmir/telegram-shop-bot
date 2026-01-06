@@ -1155,7 +1155,13 @@ def _find_product(gender:str , category:str , product_id:str) -> Optional[Dict]:
     return None
 
 def format_card_number(card_number: str) -> str:
-    return " ".join(card_number[i:i+4] for i in range(0, len(card_number), 4))
+    raw = re.sub(r"\D+", "", str(card_number or ""))
+    nbsp = "\u00A0" 
+    grouped = nbsp.join(raw[i:i+4] for i in range(0, len(raw), 4))
+    LRI = "\u2066"
+    PDI = "\u2069"
+    return f"{LRI}{grouped}{PDI}"
+
 
 def _build_cards_text_and_entities(cards: List[Dict]) -> Tuple[str, List[MessageEntity], List[str]]:
     """Build card list text block + PRE entities (no backticks) and raw numbers.
