@@ -2655,10 +2655,19 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         "📸 بعد از پرداخت، روی دکمه زیر بزنید و <i>عکس رسید پرداخت</i> را ارسال کنید."
     )
 
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
-        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
-    ])
+    # دکمه‌های کپی (تلگرام اجازه کپی خودکار به کلیپ‌بورد را نمی‌دهد؛ با این دکمه شماره خام ارسال می‌شود)
+    copy_rows = []
+    for i, c in enumerate(CARDS, start=1):
+        raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
+        if raw:
+            copy_rows.append([InlineKeyboardButton(f"📋 کپی کارت {i}", callback_data=f"cardcopy:{i}")])
+
+    kb = InlineKeyboardMarkup(
+        copy_rows + [
+            [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+        ]
+    )
 
     chat_id = update.effective_chat.id
 
@@ -3565,6 +3574,27 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     # ---- end shipping method callbacks ----
     
 # ---- manual payment / receipt callbacks ----
+    if data.startswith("cardcopy:"):
+        try:
+            idx = int(data.split(":", 1)[1])
+        except Exception:
+            await q.answer("❌ شماره کارت نامعتبر است.", show_alert=True)
+            return
+
+        if idx < 1 or idx > len(CARDS):
+            await q.answer("❌ کارت پیدا نشد.", show_alert=True)
+            return
+
+        raw = re.sub(r"\D+", "", str(CARDS[idx-1].get("number", "") or "")).strip()
+        if not raw:
+            await q.answer("❌ شماره کارتی ثبت نشده است.", show_alert=True)
+            return
+
+        # تلگرام اجازه کپی خودکار به کلیپ‌بورد را نمی‌دهد؛ شماره خام را ارسال می‌کنیم تا راحت Copy شود.
+        await q.answer("✅ شماره کارت ارسال شد. روی پیام نگه دارید و Copy را بزنید.", show_alert=False)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=raw)
+        return
+
     if data.startswith("receipt:start:"):
         _, _, order_id = data.split(":", 2)
         await receipt_start(update, context, order_id)
