@@ -20,6 +20,11 @@ from html import escape
 import re
 
 
+
+def _utf16_len(s: str) -> int:
+    # Telegram offsets/lengths are in UTF-16 code units
+    return len(s.encode("utf-16-le")) // 2
+
 CUSTOMER_NAME, CUSTOMER_PHONE, CUSTOMER_ADDRESS, CUSTOMER_POSTAL = range(4)
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",)
@@ -2609,7 +2614,7 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
 
 
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
-    """Send card-to-card payment instructions (HTML) with readable card numbers (no entities)."""
+    """Send card-to-card payment instructions with tap-to-copy bank card entities (no extra buttons)."""
 
     # 🧹 حذف پیام «فرم مشخصات تکمیل شد» تا زیر پیام پرداخت نمایش داده نشود
     mid = context.user_data.pop("form_done_msg_id", None)
@@ -2626,48 +2631,64 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
     ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
 
-    # کارت‌ها: ۴ رقم ۴ رقم + مرتب برای متن فارسی (RTL)
-    card_lines = []
+    # --- Build plain text + entities (Telegram offsets/lengths are UTF-16) ---
+    parts = []
+    entities = []
+
+    header = (
+        "💳 پرداخت کارت به کارت\n\n"
+        f"🔸 مبلغ قابل پرداخت: {_ftm_toman(total)}\n"
+        f"🚚 روش ارسال: {ship_label}\n"
+        f"{shipping_note}\n\n"
+        "🔹 اطلاعات حساب‌های فروشگاه:\n"
+        "برای کپی، روی «شماره ۱۶ رقمی» یک بار بزنید.\n\n"
+    )
+    parts.append(header)
+
+    offset = _utf16_len("".join(parts))
+
     for i, c in enumerate(CARDS, start=1):
         raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
+
+        # readable (4-4-4-4)
         grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
+        holder = str(c.get("holder", "") or "").strip()
 
-        # جلوگیری از بهم‌ریختگی اعداد داخل متن فارسی
-        grouped = "\u200e" + grouped  # LTR mark
-
-        holder = escape(str(c.get("holder", "") or ""))
-        card_lines.append(
+        # Make the raw number appear alone on its own line for best tap-to-copy behavior
+        block = (
             f"{i}) 💳\n"
-            f"<pre>{grouped}</pre>\n"
-            f"👤 ({holder})"
+            f"{raw}\n"
+            f"{grouped}\n"
+            f"({holder})\n\n"
+        )
+        parts.append(block)
+
+        # Entity only covers the raw digits line (digits only)
+        raw_start_in_block = _utf16_len(f"{i}) 💳\n")
+        raw_offset = offset + raw_start_in_block
+        raw_len = _utf16_len(raw)
+
+        # Some ptb versions may not have MessageEntityType.BANK_CARD_NUMBER, but accept the string.
+        ent_type = getattr(MessageEntityType, "BANK_CARD_NUMBER", "bank_card_number")
+        entities.append(
+            MessageEntity(
+                type=ent_type,
+                offset=raw_offset,
+                length=raw_len,
+            )
         )
 
-    cards_html = "\n\n".join(card_lines) if card_lines else "فعلاً شماره کارتی ثبت نشده است."
+        offset += _utf16_len(block)
 
-    text = (
-        "💳 <b>پرداخت کارت به کارت</b>\n\n"
-        f"🔸 مبلغ قابل پرداخت: <b>{_ftm_toman(total)}</b>\n"
-        f"🚚 روش ارسال: <b>{escape(str(ship_label))}</b>\n"
-        f"{escape(str(shipping_note))}\n\n"
-        "🔹 اطلاعات حساب‌های فروشگاه:\n"
-        "<i>برای کپی، روی شماره کارت نگه دارید و گزینه Copy را انتخاب کنید.</i>\n\n"
-        f"{cards_html}\n\n"
-        "📸 بعد از پرداخت، روی دکمه زیر بزنید و <i>عکس رسید پرداخت</i> را ارسال کنید."
-    )
+    footer = "📸 بعد از پرداخت، روی دکمه زیر بزنید و عکس رسید پرداخت را ارسال کنید."
+    parts.append(footer)
 
-    # دکمه‌های کپی (تلگرام اجازه کپی خودکار به کلیپ‌بورد را نمی‌دهد؛ با این دکمه شماره خام ارسال می‌شود)
-    copy_rows = []
-    for i, c in enumerate(CARDS, start=1):
-        raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
-        if raw:
-            copy_rows.append([InlineKeyboardButton(f"📋 کپی کارت {i}", callback_data=f"cardcopy:{i}")])
+    text = "".join(parts)
 
-    kb = InlineKeyboardMarkup(
-        copy_rows + [
-            [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
-            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
-        ]
-    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
+        [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
+    ])
 
     chat_id = update.effective_chat.id
 
@@ -2675,21 +2696,21 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         q = update.callback_query
         await q.answer()
         try:
-            await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
+            await q.edit_message_text(text, reply_markup=kb, entities=entities, disable_web_page_preview=True)
         except Exception:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=text,
-                parse_mode="HTML",
                 reply_markup=kb,
+                entities=entities,
                 disable_web_page_preview=True,
             )
     else:
         await context.bot.send_message(
             chat_id=chat_id,
             text=text,
-            parse_mode="HTML",
             reply_markup=kb,
+            entities=entities,
             disable_web_page_preview=True,
         )
 
@@ -3574,27 +3595,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     # ---- end shipping method callbacks ----
     
 # ---- manual payment / receipt callbacks ----
-    if data.startswith("cardcopy:"):
-        try:
-            idx = int(data.split(":", 1)[1])
-        except Exception:
-            await q.answer("❌ شماره کارت نامعتبر است.", show_alert=True)
-            return
-
-        if idx < 1 or idx > len(CARDS):
-            await q.answer("❌ کارت پیدا نشد.", show_alert=True)
-            return
-
-        raw = re.sub(r"\D+", "", str(CARDS[idx-1].get("number", "") or "")).strip()
-        if not raw:
-            await q.answer("❌ شماره کارتی ثبت نشده است.", show_alert=True)
-            return
-
-        # تلگرام اجازه کپی خودکار به کلیپ‌بورد را نمی‌دهد؛ شماره خام را ارسال می‌کنیم تا راحت Copy شود.
-        await q.answer("✅ شماره کارت ارسال شد. روی پیام نگه دارید و Copy را بزنید.", show_alert=False)
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=raw)
-        return
-
     if data.startswith("receipt:start:"):
         _, _, order_id = data.split(":", 2)
         await receipt_start(update, context, order_id)
