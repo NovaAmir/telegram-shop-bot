@@ -2,6 +2,15 @@ from telegram import (Update , InlineKeyboardButton , InlineKeyboardMarkup , Rep
 from telegram.ext import (ApplicationBuilder , CommandHandler , ContextTypes , CallbackQueryHandler , Application , MessageHandler , filters , ConversationHandler)
 from telegram import MessageEntity
 from telegram.constants import MessageEntityType
+
+# --- One-tap copy support (Telegram copy button) ---
+try:
+    from telegram import CopyTextButton
+    _HAS_COPY_BUTTON = True
+except Exception:
+    _HAS_COPY_BUTTON = False
+# ---------------------------------------------------
+
 import logging
 import os
 import json
@@ -2614,7 +2623,11 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
 
 
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
-    """Send card-to-card payment instructions with tap-to-copy bank card entities (no extra buttons)."""
+    """Send card-to-card payment instructions.
+
+    ✅ One-tap copy is implemented via InlineKeyboardButton(copy_text=...).
+    If the running python-telegram-bot version does not support it, we fall back to entities.
+    """
 
     # 🧹 حذف پیام «فرم مشخصات تکمیل شد» تا زیر پیام پرداخت نمایش داده نشود
     mid = context.user_data.pop("form_done_msg_id", None)
@@ -2631,6 +2644,11 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
     ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
 
+    # copy hint depending on library support
+    copy_hint = "برای کپی، روی دکمه «📋 کپی کارت» بزنید."
+    if not _HAS_COPY_BUTTON:
+        copy_hint = "برای کپی، روی «شماره ۱۶ رقمی» یک بار بزنید."
+
     # --- Build plain text + entities (Telegram offsets/lengths are UTF-16) ---
     parts = []
     entities = []
@@ -2641,7 +2659,7 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         f"🚚 روش ارسال: {ship_label}\n"
         f"{shipping_note}\n\n"
         "🔹 اطلاعات حساب‌های فروشگاه:\n"
-        "برای کپی، روی «شماره ۱۶ رقمی» یک بار بزنید.\n\n"
+        f"{copy_hint}\n\n"
     )
     parts.append(header)
 
@@ -2685,10 +2703,25 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
 
     text = "".join(parts)
 
-    kb = InlineKeyboardMarkup([
+        # Build inline keyboard: copy buttons (one-tap) + receipt + menu
+    rows = []
+    if _HAS_COPY_BUTTON:
+        for i, c in enumerate(CARDS, start=1):
+            raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
+            if not raw:
+                continue
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"📋 کپی کارت {i}",
+                    copy_text=CopyTextButton(text=raw[:256]),
+                )
+            ])
+
+    rows += [
         [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
-    ])
+    ]
+    kb = InlineKeyboardMarkup(rows)
 
     chat_id = update.effective_chat.id
 
