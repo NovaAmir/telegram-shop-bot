@@ -2650,33 +2650,33 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     for i, c in enumerate(CARDS, start=1):
         raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
 
-        # readable (4-4-4-4)
-        grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
+        # holder name
         holder = str(c.get("holder", "") or "").strip()
 
-        # Make the raw number appear alone on its own line for best tap-to-copy behavior
+        # ✅ only ONE card number line (digits only) + tap-to-copy entity on that line
         block = (
             f"{i}) 💳\n"
             f"{raw}\n"
-            f"{grouped}\n"
             f"({holder})\n\n"
         )
         parts.append(block)
 
         # Entity only covers the raw digits line (digits only)
-        raw_start_in_block = _utf16_len(f"{i}) 💳\n")
-        raw_offset = offset + raw_start_in_block
-        raw_len = _utf16_len(raw)
+        # (Telegram clients usually only treat 16-digit numbers as bank cards)
+        if len(raw) == 16:
+            raw_start_in_block = _utf16_len(f"{i}) 💳\n")
+            raw_offset = offset + raw_start_in_block
+            raw_len = _utf16_len(raw)
 
-        # Some ptb versions may not have MessageEntityType.BANK_CARD_NUMBER, but accept the string.
-        ent_type = getattr(MessageEntityType, "BANK_CARD_NUMBER", "bank_card_number")
-        entities.append(
-            MessageEntity(
-                type=ent_type,
-                offset=raw_offset,
-                length=raw_len,
+            # Some ptb versions may not have MessageEntityType.BANK_CARD_NUMBER, but accept the string.
+            ent_type = getattr(MessageEntityType, "BANK_CARD_NUMBER", "bank_card_number")
+            entities.append(
+                MessageEntity(
+                    type=ent_type,
+                    offset=raw_offset,
+                    length=raw_len,
+                )
             )
-        )
 
         offset += _utf16_len(block)
 
