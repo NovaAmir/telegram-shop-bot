@@ -2625,8 +2625,9 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     """Send card-to-card payment instructions.
 
-    ✅ One-tap copy is implemented via InlineKeyboardButton(copy_text=...).
-    If the running python-telegram-bot version does not support it, we fall back to entities.
+    نکته خیلی مهم:
+    ✅ تنها راه «کپی با یک ضربه» برای شماره کارت داخل تلگرام، استفاده از دکمه‌های inline با ویژگی copy_text است.
+    تلگرام اجازه نمی‌دهد با یک ضربه روی متنِ پیام (خودِ عدد) مستقیم کپی شود.
     """
 
     # 🧹 حذف پیام «فرم مشخصات تکمیل شد» تا زیر پیام پرداخت نمایش داده نشود
@@ -2644,16 +2645,14 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
     ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
 
-    # copy hint depending on library support
-    copy_hint = "برای کپی، روی دکمه‌ی «شماره کارت» (پایین پیام) یک بار بزنید."
-    if not _HAS_COPY_BUTTON:
-        copy_hint = "کپی یک‌ضرب با دکمه در این نسخه فعال نیست؛ برای کپی باید روی پیام نگه‌دارید و Copy را بزنید (یا کتابخانه/تلگرام را آپدیت کنید)."
+    if _HAS_COPY_BUTTON:
+        copy_hint = "برای کپی، روی «شماره کارت»‌های پایین پیام یک بار بزنید."
+    else:
+        copy_hint = "برای کپی یک‌ضرب، باید تلگرام و کتابخانه python-telegram-bot را آپدیت کنید؛ فعلاً فقط با نگه‌داشتن پیام و Copy می‌شود."
 
-    # --- Build plain text + entities (Telegram offsets/lengths are UTF-16) ---
-    parts = []
-    entities = []
-
-    header = (
+    # --- متن پیام ---
+    parts: list[str] = []
+    parts.append(
         "💳 پرداخت کارت به کارت\n\n"
         f"🔸 مبلغ قابل پرداخت: {_ftm_toman(total)}\n"
         f"🚚 روش ارسال: {ship_label}\n"
@@ -2661,40 +2660,37 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         "🔹 اطلاعات حساب‌های فروشگاه:\n"
         f"{copy_hint}\n\n"
     )
-    parts.append(header)
 
-    offset = _utf16_len("".join(parts))
-
+    # در متن فقط نام صاحب کارت/بانک را می‌گذاریم تا متن قشنگ بماند.
+    # خودِ شماره‌ها را به‌صورت «دکمه‌ی شماره کارت» پایین پیام می‌گذاریم (مثل یک خط متن) تا با یک ضربه کپی شود.
     for i, c in enumerate(CARDS, start=1):
-        raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
         holder = str(c.get("holder", "") or "").strip()
-        if not raw and not holder:
-            continue
-        # show a masked hint in text; full number is available via copy button below
-        last4 = raw[-4:] if raw else ""
-        masked = (f"**** **** **** {last4}" if last4 else "")
-        block = (
-            f"{i}) 💳\n"
-            f"{masked}\n"
-            f"({holder})\n\n"
-        )
-        parts.append(block)
-        offset += _utf16_len(block)
+        bank = str(c.get("bank", "") or "").strip()
+        line = f"{i})"
+        if bank:
+            line += f" {bank}"
+        parts.append(line + "\n")
+        if holder:
+            parts.append(f"({holder})\n")
+        raw = re.sub(r"\\D+", "", str(c.get("number", "") or "")).strip()
+        if raw:
+            grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
+            parts.append(f"{grouped}\n")
+        parts.append("\n")
 
-    footer = "📸 بعد از پرداخت، روی دکمه زیر بزنید و عکس رسید پرداخت را ارسال کنید."
-    parts.append(footer)
-
+    parts.append("📸 بعد از پرداخت، روی دکمه زیر بزنید و عکس رسید پرداخت را ارسال کنید.")
     text = "".join(parts)
 
-        # Build inline keyboard: copy buttons (one-tap) + receipt + menu
-    rows = []
+    # --- کیبورد: دکمه‌های شماره کارت (یک‌ضرب کپی) + رسید + منوی اصلی ---
+    rows: list[list[InlineKeyboardButton]] = []
+
     if _HAS_COPY_BUTTON:
         for i, c in enumerate(CARDS, start=1):
             raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
             if not raw:
                 continue
             grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
-            # Button text shows the card number itself; one tap copies the raw digits.
+            # دکمه را شبیه «یک خط شماره» می‌گذاریم؛ با یک ضربه کپی می‌شود.
             rows.append([
                 InlineKeyboardButton(
                     text=f"{i}) {grouped}",
@@ -2709,28 +2705,16 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     kb = InlineKeyboardMarkup(rows)
 
     chat_id = update.effective_chat.id
-
     if update.callback_query:
         q = update.callback_query
         await q.answer()
         try:
-            await q.edit_message_text(text, reply_markup=kb, entities=entities, disable_web_page_preview=True)
+            await q.edit_message_text(text, reply_markup=kb, disable_web_page_preview=True)
         except Exception:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_markup=kb,
-                entities=entities,
-                disable_web_page_preview=True,
-            )
+            await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, disable_web_page_preview=True)
     else:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=kb,
-            entities=entities,
-            disable_web_page_preview=True,
-        )
+        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, disable_web_page_preview=True)
+
 
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     q = update.callback_query
