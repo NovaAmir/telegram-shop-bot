@@ -2625,8 +2625,11 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     """Send card-to-card payment instructions.
 
-    ✅ One-tap copy is implemented via InlineKeyboardButton(copy_text=...).
-    If the running python-telegram-bot version does not support it, we fall back to entities.
+    ✅ Real one-tap copy in Telegram is only possible via InlineKeyboardButton(copy_text=...).
+    Tapping text inside the message will always trigger Telegram's own message UI (reply/copy/forward, selection, ...),
+    which bots cannot override.
+
+    So when CopyTextButton is available, we show each card number as a *button* (looks like the number itself) and one tap copies it.
     """
 
     # 🧹 حذف پیام «فرم مشخصات تکمیل شد» تا زیر پیام پرداخت نمایش داده نشود
@@ -2645,7 +2648,7 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
 
     # copy hint depending on library support
-    copy_hint = "برای کپی، روی دکمه «📋 کپی کارت» بزنید."
+    copy_hint = "برای کپی، روی «شماره کارت» (دکمه‌های زیر) یک بار بزنید."
     if not _HAS_COPY_BUTTON:
         copy_hint = "برای کپی، روی «شماره ۱۶ رقمی» یک بار بزنید."
 
@@ -2667,11 +2670,19 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
 
     for i, c in enumerate(CARDS, start=1):
         raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
-
-        # holder name
         holder = str(c.get("holder", "") or "").strip()
 
-        # ✅ only ONE card number line (digits only) + tap-to-copy entity on that line
+        if _HAS_COPY_BUTTON:
+            # شماره کارت داخل دکمه‌ها نمایش داده می‌شود (تا با یک ضربه کپی شود)
+            block = (
+                f"{i}) 💳\n"
+                f"👤 ({holder})\n\n"
+            )
+            parts.append(block)
+            offset += _utf16_len(block)
+            continue
+
+        # fallback: show number in text and try bank_card_number entity
         block = (
             f"{i}) 💳\n"
             f"{raw}\n"
@@ -2679,14 +2690,11 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         )
         parts.append(block)
 
-        # Entity only covers the raw digits line (digits only)
-        # (Telegram clients usually only treat 16-digit numbers as bank cards)
         if len(raw) == 16:
             raw_start_in_block = _utf16_len(f"{i}) 💳\n")
             raw_offset = offset + raw_start_in_block
             raw_len = _utf16_len(raw)
 
-            # Some ptb versions may not have MessageEntityType.BANK_CARD_NUMBER, but accept the string.
             ent_type = getattr(MessageEntityType, "BANK_CARD_NUMBER", "bank_card_number")
             entities.append(
                 MessageEntity(
@@ -2703,16 +2711,18 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
 
     text = "".join(parts)
 
-        # Build inline keyboard: copy buttons (one-tap) + receipt + menu
+    # --- Build inline keyboard ---
     rows = []
+
     if _HAS_COPY_BUTTON:
         for i, c in enumerate(CARDS, start=1):
             raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
             if not raw:
                 continue
+            grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
             rows.append([
                 InlineKeyboardButton(
-                    text=f"📋 کپی کارت {i}",
+                    text=f"{i}) 📋 {grouped}",
                     copy_text=CopyTextButton(text=raw[:256]),
                 )
             ])
@@ -2746,7 +2756,6 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
             entities=entities,
             disable_web_page_preview=True,
         )
-
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     q = update.callback_query
     await q.answer()
