@@ -2625,9 +2625,12 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     """Send card-to-card payment instructions.
 
-    نکته خیلی مهم:
-    ✅ تنها راه «کپی با یک ضربه» برای شماره کارت داخل تلگرام، استفاده از دکمه‌های inline با ویژگی copy_text است.
-    تلگرام اجازه نمی‌دهد با یک ضربه روی متنِ پیام (خودِ عدد) مستقیم کپی شود.
+    ✅ What is (and isn't) possible:
+    - Bots cannot make *plain message text* copy-to-clipboard on a single tap.
+    - The only true one-tap clipboard copy from a bot is InlineKeyboardButton(copy_text=CopyTextButton(...)),
+      which requires both:
+        1) python-telegram-bot that includes CopyTextButton (your server env), and
+        2) a Telegram client that supports "copy_text" buttons.
     """
 
     # 🧹 حذف پیام «فرم مشخصات تکمیل شد» تا زیر پیام پرداخت نمایش داده نشود
@@ -2645,52 +2648,55 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     shipping_note = SHIPPING_INFO.get(shipping_method, "هزینه ارسال بر عهده مشتری است.")
     ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
 
+    # copy hint depending on library support
     if _HAS_COPY_BUTTON:
-        copy_hint = "برای کپی، روی «شماره کارت»‌های پایین پیام یک بار بزنید."
+        copy_hint = "برای کپی یک‌ضرب، روی «خودِ شماره کارت» در دکمه‌های پایین پیام بزنید."
     else:
-        copy_hint = "برای کپی یک‌ضرب، باید تلگرام و کتابخانه python-telegram-bot را آپدیت کنید؛ فعلاً فقط با نگه‌داشتن پیام و Copy می‌شود."
+        copy_hint = "⚠️ کپی یک‌ضرب در این نسخه فعال نیست (CopyTextButton موجود نیست). برای فعال شدن باید python-telegram-bot روی سرور آپدیت شود."
 
-    # --- متن پیام ---
-    parts: list[str] = []
-    parts.append(
-        "💳 پرداخت کارت به کارت\n\n"
-        f"🔸 مبلغ قابل پرداخت: {_ftm_toman(total)}\n"
-        f"🚚 روش ارسال: {ship_label}\n"
-        f"{shipping_note}\n\n"
-        "🔹 اطلاعات حساب‌های فروشگاه:\n"
-        f"{copy_hint}\n\n"
+    # --- Build HTML text (clean + readable) ---
+    parts = []
+    header = (
+        "💳 <b>پرداخت کارت به کارت</b>"
+        f"🔸 <b>مبلغ قابل پرداخت:</b> {_ftm_toman(total)}"
+        f"🚚 <b>روش ارسال:</b> {html.escape(str(ship_label))}"
+        f"{html.escape(str(shipping_note))}"
+        "🔹 <b>اطلاعات حساب‌های فروشگاه:</b>"
+        f"{html.escape(copy_hint)}"
     )
+    parts.append(header)
 
-    # در متن فقط نام صاحب کارت/بانک را می‌گذاریم تا متن قشنگ بماند.
-    # خودِ شماره‌ها را به‌صورت «دکمه‌ی شماره کارت» پایین پیام می‌گذاریم (مثل یک خط متن) تا با یک ضربه کپی شود.
+    # Card blocks in text (NOT masked; formatting like config/code)
     for i, c in enumerate(CARDS, start=1):
+        raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
         holder = str(c.get("holder", "") or "").strip()
-        bank = str(c.get("bank", "") or "").strip()
-        line = f"{i})"
-        if bank:
-            line += f" {bank}"
-        parts.append(line + "\n")
-        if holder:
-            parts.append(f"({holder})\n")
-        raw = re.sub(r"\\D+", "", str(c.get("number", "") or "")).strip()
-        if raw:
-            grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
-            parts.append(f"{grouped}\n")
-        parts.append("\n")
+        if not raw and not holder:
+            continue
 
-    parts.append("📸 بعد از پرداخت، روی دکمه زیر بزنید و عکس رسید پرداخت را ارسال کنید.")
-    text = "".join(parts)
+        # show as code block so user can easily select/copy if needed
+        block = (
+            f"{i}) 💳"
+            f"<pre>{html.escape(raw)}</pre>"
+            f"({html.escape(holder)})"
+        )
+        parts.append(block)
 
-    # --- کیبورد: دکمه‌های شماره کارت (یک‌ضرب کپی) + رسید + منوی اصلی ---
-    rows: list[list[InlineKeyboardButton]] = []
+    footer = "📸 بعد از پرداخت، روی دکمه زیر بزنید و عکس رسید پرداخت را ارسال کنید."
+    parts.append(html.escape(footer))
 
+    text_html = "".join(parts)
+
+    # --- Inline keyboard ---
+    rows = []
+
+    # One-tap copy buttons: show the NUMBER itself as the button text
     if _HAS_COPY_BUTTON:
         for i, c in enumerate(CARDS, start=1):
             raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
             if not raw:
                 continue
+            # readable label on button (group 4-4-4-4)
             grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
-            # دکمه را شبیه «یک خط شماره» می‌گذاریم؛ با یک ضربه کپی می‌شود.
             rows.append([
                 InlineKeyboardButton(
                     text=f"{i}) {grouped}",
@@ -2698,6 +2704,7 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
                 )
             ])
 
+    # keep your existing flow buttons
     rows += [
         [InlineKeyboardButton("📸 ارسال عکس رسید پرداخت", callback_data=f"receipt:start:{order_id}")],
         [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")],
@@ -2705,15 +2712,28 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     kb = InlineKeyboardMarkup(rows)
 
     chat_id = update.effective_chat.id
+
     if update.callback_query:
         q = update.callback_query
         await q.answer()
         try:
-            await q.edit_message_text(text, reply_markup=kb, disable_web_page_preview=True)
+            await q.edit_message_text(text_html, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
         except Exception:
-            await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, disable_web_page_preview=True)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text_html,
+                reply_markup=kb,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
     else:
-        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, disable_web_page_preview=True)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text_html,
+            reply_markup=kb,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
 
 
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
