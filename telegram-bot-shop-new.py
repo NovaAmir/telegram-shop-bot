@@ -2625,11 +2625,8 @@ def _create_order_from_current_cart(update: Update, context: ContextTypes.DEFAUL
 async def manual_payment_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     """Send card-to-card payment instructions.
 
-    ✅ Real one-tap copy in Telegram is only possible via InlineKeyboardButton(copy_text=...).
-    Tapping text inside the message will always trigger Telegram's own message UI (reply/copy/forward, selection, ...),
-    which bots cannot override.
-
-    So when CopyTextButton is available, we show each card number as a *button* (looks like the number itself) and one tap copies it.
+    ✅ One-tap copy is implemented via InlineKeyboardButton(copy_text=...).
+    If the running python-telegram-bot version does not support it, we fall back to entities.
     """
 
     # 🧹 حذف پیام «فرم مشخصات تکمیل شد» تا زیر پیام پرداخت نمایش داده نشود
@@ -2648,9 +2645,9 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     ship_label = SHIPPING_METHODS.get(shipping_method, {}).get("label", "انتخاب نشده")
 
     # copy hint depending on library support
-    copy_hint = "برای کپی، روی «شماره کارت» (دکمه‌های زیر) یک بار بزنید."
+    copy_hint = "برای کپی، روی دکمه‌ی «شماره کارت» (پایین پیام) یک بار بزنید."
     if not _HAS_COPY_BUTTON:
-        copy_hint = "برای کپی، روی «شماره ۱۶ رقمی» یک بار بزنید."
+        copy_hint = "کپی یک‌ضرب با دکمه در این نسخه فعال نیست؛ برای کپی باید روی پیام نگه‌دارید و Copy را بزنید (یا کتابخانه/تلگرام را آپدیت کنید)."
 
     # --- Build plain text + entities (Telegram offsets/lengths are UTF-16) ---
     parts = []
@@ -2671,39 +2668,17 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
     for i, c in enumerate(CARDS, start=1):
         raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
         holder = str(c.get("holder", "") or "").strip()
-
-        if _HAS_COPY_BUTTON:
-            # شماره کارت داخل دکمه‌ها نمایش داده می‌شود (تا با یک ضربه کپی شود)
-            block = (
-                f"{i}) 💳\n"
-                f"👤 ({holder})\n\n"
-            )
-            parts.append(block)
-            offset += _utf16_len(block)
+        if not raw and not holder:
             continue
-
-        # fallback: show number in text and try bank_card_number entity
+        # show a masked hint in text; full number is available via copy button below
+        last4 = raw[-4:] if raw else ""
+        masked = (f"**** **** **** {last4}" if last4 else "")
         block = (
             f"{i}) 💳\n"
-            f"{raw}\n"
+            f"{masked}\n"
             f"({holder})\n\n"
         )
         parts.append(block)
-
-        if len(raw) == 16:
-            raw_start_in_block = _utf16_len(f"{i}) 💳\n")
-            raw_offset = offset + raw_start_in_block
-            raw_len = _utf16_len(raw)
-
-            ent_type = getattr(MessageEntityType, "BANK_CARD_NUMBER", "bank_card_number")
-            entities.append(
-                MessageEntity(
-                    type=ent_type,
-                    offset=raw_offset,
-                    length=raw_len,
-                )
-            )
-
         offset += _utf16_len(block)
 
     footer = "📸 بعد از پرداخت، روی دکمه زیر بزنید و عکس رسید پرداخت را ارسال کنید."
@@ -2711,18 +2686,18 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
 
     text = "".join(parts)
 
-    # --- Build inline keyboard ---
+        # Build inline keyboard: copy buttons (one-tap) + receipt + menu
     rows = []
-
     if _HAS_COPY_BUTTON:
         for i, c in enumerate(CARDS, start=1):
             raw = re.sub(r"\D+", "", str(c.get("number", "") or "")).strip()
             if not raw:
                 continue
             grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
+            # Button text shows the card number itself; one tap copies the raw digits.
             rows.append([
                 InlineKeyboardButton(
-                    text=f"{i}) 📋 {grouped}",
+                    text=f"{i}) {grouped}",
                     copy_text=CopyTextButton(text=raw[:256]),
                 )
             ])
@@ -2756,6 +2731,7 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
             entities=entities,
             disable_web_page_preview=True,
         )
+
 async def receipt_start(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str) -> None:
     q = update.callback_query
     await q.answer()
