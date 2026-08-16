@@ -2701,10 +2701,11 @@ async def manual_payment_instructions(update: Update, context: ContextTypes.DEFA
         if not raw and not holder:
             continue
 
-        # show as code block so user can easily select/copy if needed
+        # نمایش گروه‌بندی شده با فاصله (فعلی)
+        grouped = " ".join(raw[j:j+4] for j in range(0, len(raw), 4))
         block = (
             f"{i}) 💳"
-            f"<pre>{html.escape(raw)}</pre>"
+            f"<pre>{html.escape(grouped)}</pre>"
             f"({html.escape(holder)})"
         )
         parts.append(block)
