@@ -34,7 +34,7 @@ def _utf16_len(s: str) -> int:
     # Telegram offsets/lengths are in UTF-16 code units
     return len(s.encode("utf-16-le")) // 2
 
-CUSTOMER_NAME, CUSTOMER_PHONE, CUSTOMER_ADDRESS, CUSTOMER_POSTAL = range(4)
+CUSTOMER_NAME, CUSTOMER_PHONE, CUSTOMER_ADDRESS, CUSTOMER_POSTAL, CUSTOMER_SHIPPING = range(5)
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",)
 logger = logging.getLogger(__name__)
@@ -2393,16 +2393,45 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("کد پستی ۱۰ رقمی:")
         return CUSTOMER_POSTAL
     if awaiting == "postal":
-        if re.fullmatch(r"\d{10}" , _to_english_digits(text)): # اعمال تبدیل برای کدپستی هم توصیه می‌شود
+        if re.fullmatch(r"\d{10}" , _to_english_digits(text)):
             context.user_data["customer"]["postal"] = _to_english_digits(text)
-            context.user_data["awaiting"] = None
-            # ⭐️ (اصلاح شده) فراخوانی با کل شیء update برای استخراج دقیق chat_id
-            await show_checkout_summary(update, context) 
-            return ConversationHandler.END
+            context.user_data["awaiting"] = "shipping"  # تغییر وضعیت به انتخاب روش ارسال
+            # نمایش دکمه‌های انتخاب روش ارسال (ReplyKeyboard)
+            shipping_keyboard = ReplyKeyboardMarkup([
+                ["📮 پست", "🚚 تیپاکس"],
+                ["🛵 پیک (درون‌شهری)", "❌ انصراف"]
+            ], resize_keyboard=True, one_time_keyboard=False)
+            await update.message.reply_text(
+                "🚚 حالا روش ارسال مورد نظر خود را انتخاب کنید:",
+                reply_markup=shipping_keyboard
+            )
+            return CUSTOMER_SHIPPING
         else:
             await update.message.reply_text("کد پستی نامعتبر است. ۱۰ رقم (فارسی یا انگلیسی) وارد کنید.")
-        return CUSTOMER_POSTAL
-
+            return CUSTOMER_POSTAL
+    if awaiting == "shipping":
+        # نگاشت متن دکمه‌ها به کلیدهای داخلی
+        shipping_map = {
+            "📮 پست": "post",
+            "🚚 تیپاکس": "tipax",
+            "🛵 پیک (درون‌شهری)": "courier",
+        }
+        if text in shipping_map:
+            method = shipping_map[text]
+            context.user_data["customer"]["shipping_method"] = method
+            context.user_data["awaiting"] = None
+            # حالا خلاصه سفارش را نشان بده
+            await show_checkout_summary(update, context)
+            return ConversationHandler.END
+        elif text == "❌ انصراف":
+            context.user_data.pop("customer", None)
+            context.user_data["awaiting"] = None
+            await update.message.reply_text("❌ فرم لغو شد.", reply_markup=main_menu_reply(is_admin=_is_admin_activated(update)))
+            await show_cart(update, context)
+            return ConversationHandler.END
+        else:
+            await update.message.reply_text("لطفاً یکی از گزینه‌های روش ارسال را انتخاب کنید.")
+            return CUSTOMER_SHIPPING
 
 async def on_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.contact:
@@ -2484,7 +2513,6 @@ async def show_checkout_summary(update_or_msg, context: ContextTypes.DEFAULT_TYP
     
     # 🟢 دکمه‌های مورد درخواست کاربر
     kb = InlineKeyboardMarkup([
-    [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
     [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
     [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
     [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
@@ -3329,15 +3357,24 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     customer = context.user_data.get("customer", {})
     if not customer or not customer.get("shipping_method"):
-        # کاربر هنوز روش ارسال را انتخاب نکرده
-        await q.answer("ابتدا روش ارسال را انتخاب کنید.", show_alert=True)
-        text = _build_checkout_summary_text(context)
+        await q.answer("لطفاً ابتدا روش ارسال را در فرم مشخصات انتخاب کنید.", show_alert=True)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
+            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
+        ])
         try:
-            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(None))
+            await q.edit_message_text(
+                "❌ روش ارسال انتخاب نشده است.\n\n"
+                "لطفاً روی دکمه «ویرایش مشخصات» کلیک کنید و فرم را تا انتها (شامل انتخاب روش ارسال) تکمیل کنید.",
+                reply_markup=kb
+            )
         except Exception:
-            pass
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ روش ارسال انتخاب نشده است.\n\nلطفاً از منوی اصلی گزینه «سبد خرید» را انتخاب کنید و سپس روی «ثبت سفارش» کلیک کنید.",
+                reply_markup=kb
+            )
         return
-
 
     # پاکسازی رزروهای منقضی شده (جلوگیری از قفل شدن موجودی)
     _cleanup_expired_reservations()
@@ -3360,8 +3397,8 @@ async def checkout_pay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await manual_payment_instructions(update, context, order_id)
-
-
+    
+    
 async def checkout_verify(update: Update, context: ContextTypes.DEFAULT_TYPE, order_id: str):
     q = update.callback_query
     await q.answer()
@@ -3560,61 +3597,6 @@ async def menu_router(update:Update , context:ContextTypes.DEFAULT_TYPE) -> None
     if data == "menu:support":
         await q.edit_message_text(" پشتیبانی: @amirmehdi_84_10", reply_markup=main_menu()) ; return
         
-    
-
-    
-    # ---- shipping method callbacks ----
-    if data == "shipmethod:choose":
-        customer = context.user_data.get("customer", {})
-        selected = customer.get("shipping_method")
-        text = _build_checkout_summary_text(context)
-        try:
-            await q.edit_message_text(text, reply_markup=shipping_methods_keyboard(selected))
-        except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=shipping_methods_keyboard(selected))
-        return
-    
-    if data.startswith("shipmethod:set:"):
-        _, _, method = data.split(":", 2)
-        if method not in SHIPPING_METHODS:
-            await q.answer("روش ارسال نامعتبر است.", show_alert=True)
-            return
-        context.user_data.setdefault("customer", {})["shipping_method"] = method
-        # ✅ اگر سفارش قبلاً ساخته شده، روش ارسال داخل ORDER هم آپدیت شود
-        existing = context.user_data.get("current_order_id")
-        if existing and STORE.find_order(existing):
-            order = STORE.find_order(existing)
-            new_customer = dict(order.get("customer", {}))
-            new_customer["shipping_method"] = method
-            STORE.update_order(existing, shipping_method=method, customer=new_customer)
-
-        text = _build_checkout_summary_text(context)
-        # برگشت به خلاصه سفارش با کیبورد اصلی همان مرحله
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
-            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
-            [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
-            [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
-            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
-        ])
-        await q.edit_message_text(text, reply_markup=kb)
-        await q.answer("روش ارسال ثبت شد ✅", show_alert=False)
-        info = SHIPPING_INFO.get(method, "هزینه ارسال بر عهده مشتری است.")
-        await q.answer(info, show_alert=True)
-        return
-    
-    if data == "shipmethod:back":
-        text = _build_checkout_summary_text(context)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚚 انتخاب روش ارسال", callback_data="shipmethod:choose")],
-            [InlineKeyboardButton("✏️ ویرایش مشخصات", callback_data="checkout:begin")],
-            [InlineKeyboardButton("💳 اقدام به پرداخت نهایی", callback_data="checkout:pay")],
-            [InlineKeyboardButton("❌ لغو سفارش", callback_data="checkout:cancel")],
-            [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:back_home")]
-        ])
-        await q.edit_message_text(text, reply_markup=kb)
-        return
-    # ---- end shipping method callbacks ----
     
 # ---- manual payment / receipt callbacks ----
     if data.startswith("receipt:start:"):
@@ -4046,15 +4028,17 @@ application.add_handler(CommandHandler("sales", admin_dashboard))
 
 # Conversation Handler برای فرم مشتری
 conv_handler = ConversationHandler(
-    # ⭐️ (اصلاح) entry_points: شروع مکالمه با زدن دکمه "ثبت سفارش و پرداخت" یا "ویرایش مشخصات" ⭐️
     entry_points=[CallbackQueryHandler(begin_customer_form, pattern=r"^checkout:begin$")],
     states={
         CUSTOMER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
-        CUSTOMER_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text), MessageHandler(filters.CONTACT, on_contact)],
+        CUSTOMER_PHONE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, on_text),
+            MessageHandler(filters.CONTACT, on_contact)
+        ],
         CUSTOMER_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
         CUSTOMER_POSTAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],
+        CUSTOMER_SHIPPING: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_text)],  # جدید
     },
-    # ⭐️ fallbacks: بازگشت به سبد خرید در صورت انصراف ⭐️
     fallbacks=[CallbackQueryHandler(menu_router, pattern=r"^flow:cancel$")]
 )
 application.add_handler(conv_handler)
